@@ -458,18 +458,24 @@ def validate_settings(value):
     Validate the settings for a single image configuration.
     """
     # Skip validation for SD card images as they are processed at runtime
-    if value.get(CONF_SOURCE) == SOURCE_SD_CARD:
+    if isinstance(value, dict) and value.get(CONF_SOURCE) == SOURCE_SD_CARD:
         return value
     
-    # Vérifier que les clés requises sont présentes
+    # Ensure we're working with a dictionary
+    if not isinstance(value, dict):
+        raise cv.Invalid("Image configuration must be a dictionary")
+    
+    # Check that required keys are present
     if CONF_TYPE not in value:
         raise cv.Invalid("Type is required")
     
     conf_type = value[CONF_TYPE]
     type_class = IMAGE_TYPE[conf_type]
     
-    # Utiliser une valeur par défaut si transparency n'est pas définie
-    transparency = value.get(CONF_TRANSPARENCY, CONF_OPAQUE).lower()
+    # Use default value if transparency is not defined
+    transparency = value.get(CONF_TRANSPARENCY, CONF_OPAQUE)
+    if isinstance(transparency, str):
+        transparency = transparency.lower()
     
     if transparency not in type_class.allow_config:
         raise cv.Invalid(
@@ -505,20 +511,23 @@ def validate_settings(value):
     return value
 
 
-# Schéma pour une image individuelle
-IMAGE_SCHEMA = cv.Schema({
-    cv.Required(CONF_ID): cv.declare_id(Image_),
-    cv.Required(CONF_FILE): cv.Any(validate_file_shorthand, TYPED_FILE_SCHEMA),
-    cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
-    cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
-    cv.Optional(CONF_RESIZE): cv.dimensions,
-    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
-    cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
-    cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
-    cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
-})
+# Schema for individual image
+IMAGE_SCHEMA = cv.All(
+    cv.Schema({
+        cv.Required(CONF_ID): cv.declare_id(Image_),
+        cv.Required(CONF_FILE): cv.Any(validate_file_shorthand, TYPED_FILE_SCHEMA),
+        cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
+        cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
+        cv.Optional(CONF_RESIZE): cv.dimensions,
+        cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
+        cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
+        cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
+        cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
+    }),
+    validate_settings,
+)
 
-# Schéma pour les defaults
+# Schema for defaults
 DEFAULTS_SCHEMA = cv.Schema({
     cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
     cv.Optional(CONF_RESIZE): cv.dimensions,
@@ -529,28 +538,37 @@ DEFAULTS_SCHEMA = cv.Schema({
 })
 
 
+def apply_defaults_to_image(defaults, image_config):
+    """
+    Apply default values to an image configuration
+    """
+    result = {}
+    
+    # Apply defaults first
+    for key, value in defaults.items():
+        result[key] = value
+    
+    # Then apply specific image config
+    for key, value in image_config.items():
+        result[key] = value
+    
+    return result
+
+
 def process_image_config(config):
     """
-    Traite la configuration d'image en appliquant les defaults et en validant
+    Process image configuration by applying defaults and validating
     """
-    if CONF_DEFAULTS in config and CONF_IMAGES in config:
-        # Format avec defaults et images
+    if isinstance(config, dict) and CONF_DEFAULTS in config and CONF_IMAGES in config:
+        # Format with defaults and images
         defaults = config[CONF_DEFAULTS]
         processed_images = []
         
         for image in config[CONF_IMAGES]:
-            # Créer une nouvelle configuration en fusionnant defaults et image
-            final_config = {}
+            # Create new configuration by merging defaults and image
+            final_config = apply_defaults_to_image(defaults, image)
             
-            # Appliquer les defaults d'abord
-            for key, value in defaults.items():
-                final_config[key] = value
-            
-            # Puis appliquer les valeurs spécifiques à l'image
-            for key, value in image.items():
-                final_config[key] = value
-            
-            # S'assurer que les valeurs par défaut sont présentes
+            # Ensure that required values are present
             if CONF_TYPE not in final_config:
                 raise cv.Invalid("Type is required either in defaults or in image config")
             
@@ -558,25 +576,25 @@ def process_image_config(config):
         
         return processed_images
     else:
-        # Format simple - liste d'images ou image unique
+        # Simple format - list of images or single image
         if isinstance(config, list):
             return config
         else:
             return [config]
 
 
-# Schéma de configuration principal
+# Main configuration schema
 CONFIG_SCHEMA = cv.Any(
-    # Format avec defaults et images
+    # Format with defaults and images
     cv.Schema({
         cv.Required(CONF_DEFAULTS): DEFAULTS_SCHEMA,
         cv.Required(CONF_IMAGES): cv.ensure_list(IMAGE_SCHEMA),
     }),
-    # Format simple - liste d'images
+    # Simple format - list of images
     cv.ensure_list(IMAGE_SCHEMA.extend({
         cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
     })),
-    # Image unique
+    # Single image
     IMAGE_SCHEMA.extend({
         cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
     })
@@ -584,7 +602,7 @@ CONFIG_SCHEMA = cv.Any(
 
 
 async def write_image(config, all_frames=False):
-    # Cas spécial : source = sd_card → image lue à l'exécution, pas à la compilation
+    # Special case: source = sd_card → image read at runtime, not at compile time
     if config.get(CONF_SOURCE) == SOURCE_SD_CARD:
         _LOGGER.info(f"Skipping compile-time processing for SD card image: {config[CONF_FILE]}")
         return None, None, None, None, None, None
@@ -664,24 +682,24 @@ async def write_image(config, all_frames=False):
 
 
 async def to_code(config):
-    # Traiter la configuration
+    # Process configuration
     processed_images = process_image_config(config)
     
     for entry in processed_images:
-        # Vérifier si c'est une image SD card
+        # Check if it's an SD card image
         if entry.get(CONF_SOURCE) == SOURCE_SD_CARD:
-            # Ajouter la dépendance au composant sd_mmc_card
+            # Add dependency to sd_mmc_card component
             cg.add_define("USE_SD_MMC_CARD")
             
-            # Créer une instance SDCardImage
+            # Create SDCardImage instance
             var = cg.new_Pvariable(
                 entry[CONF_ID],
-                entry[CONF_FILE],  # chemin sur la SD
+                entry[CONF_FILE],  # path on SD
                 get_image_type_enum(entry[CONF_TYPE]),
                 get_transparency_enum(entry.get(CONF_TRANSPARENCY, CONF_OPAQUE))
             )
             
-            # Configurer les options si présentes
+            # Configure options if present
             if CONF_RESIZE in entry:
                 cg.add(var.set_resize(entry[CONF_RESIZE][0], entry[CONF_RESIZE][1]))
             if entry.get(CONF_DITHER) == "FLOYDSTEINBERG":
@@ -691,7 +709,7 @@ async def to_code(config):
             if byte_order := entry.get(CONF_BYTE_ORDER):
                 cg.add(var.set_big_endian(byte_order == "BIG_ENDIAN"))
         else:
-            # Image normale (locale, web, mdi, etc.)
+            # Normal image (local, web, mdi, etc.)
             prog_arr, width, height, image_type, trans_value, _ = await write_image(entry)
             cg.new_Pvariable(
                 entry[CONF_ID], prog_arr, width, height, image_type, trans_value
