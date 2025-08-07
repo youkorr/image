@@ -35,7 +35,7 @@ DEPENDENCIES = ["display"]
 image_ns = cg.esphome_ns.namespace("image")
 
 ImageType = image_ns.enum("ImageType")
-TransparencyType = image_ns.enum("TransparencyType")
+TransparencyType = image_ns.enum("TransparencyType")  # Correction du nom
 
 CONF_OPAQUE = "opaque"
 CONF_CHROMA_KEY = "chroma_key"
@@ -453,38 +453,21 @@ def validate_type(image_types):
     return validate
 
 
-def validate_image_config(value):
+def validate_settings(value):
     """
-    Validate a single image configuration after schema validation
+    Validate the settings for a single image configuration.
     """
     # Skip validation for SD card images as they are processed at runtime
-    if isinstance(value, dict) and value.get(CONF_SOURCE) == SOURCE_SD_CARD:
+    if value.get(CONF_SOURCE) == SOURCE_SD_CARD:
         return value
-    
-    # Ensure we're working with a dictionary
-    if not isinstance(value, dict):
-        return value  # Let schema validation handle this
-    
-    # Check that required keys are present
-    if CONF_TYPE not in value:
-        return value  # Let schema validation handle this
-    
-    conf_type = value[CONF_TYPE]
-    if conf_type not in IMAGE_TYPE:
-        return value  # Let schema validation handle this
         
+    conf_type = value[CONF_TYPE]
     type_class = IMAGE_TYPE[conf_type]
-    
-    # Use default value if transparency is not defined
-    transparency = value.get(CONF_TRANSPARENCY, CONF_OPAQUE)
-    if isinstance(transparency, str):
-        transparency = transparency.lower()
-    
+    transparency = value[CONF_TRANSPARENCY].lower()
     if transparency not in type_class.allow_config:
         raise cv.Invalid(
             f"Image format '{conf_type}' cannot have transparency: {transparency}"
         )
-    
     invert_alpha = value.get(CONF_INVERT_ALPHA, False)
     if (
         invert_alpha
@@ -492,14 +475,12 @@ def validate_image_config(value):
         and CONF_INVERT_ALPHA not in type_class.allow_config
     ):
         raise cv.Invalid("No alpha channel to invert")
-    
     if value.get(CONF_BYTE_ORDER) is not None and not callable(
         getattr(type_class, "set_big_endian", None)
     ):
         raise cv.Invalid(
             f"Image format '{conf_type}' does not support byte order configuration"
         )
-    
     if file := value.get(CONF_FILE):
         file = Path(file)
         if is_svg_file(file):
@@ -514,104 +495,156 @@ def validate_image_config(value):
     return value
 
 
-# Schema for individual image
-IMAGE_SCHEMA = cv.All(
-    cv.Schema({
-        cv.Required(CONF_ID): cv.declare_id(Image_),
-        cv.Required(CONF_FILE): cv.Any(validate_file_shorthand, TYPED_FILE_SCHEMA),
-        cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
-        cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
-        cv.Optional(CONF_RESIZE): cv.dimensions,
-        cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
-        cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
-        cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
-        cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
-    }),
-    validate_image_config,
-)
+IMAGE_ID_SCHEMA = {
+    cv.Required(CONF_ID): cv.declare_id(Image_),
+    cv.Required(CONF_FILE): cv.Any(validate_file_shorthand, TYPED_FILE_SCHEMA),
+    cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
+}
 
-# Schema for defaults
-DEFAULTS_SCHEMA = cv.Schema({
-    cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
+
+OPTIONS_SCHEMA = {
     cv.Optional(CONF_RESIZE): cv.dimensions,
-    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
+    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of(
+        "NONE", "FLOYDSTEINBERG", upper=True
+    ),
     cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
     cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
     cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
-})
+    cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
+}
 
+OPTIONS = [key.schema for key in OPTIONS_SCHEMA]
 
-def apply_defaults_to_image(defaults, image_config):
-    """
-    Apply default values to an image configuration
-    """
-    result = {}
-    
-    # Apply defaults first
-    for key, value in defaults.items():
-        result[key] = value
-    
-    # Then apply specific image config
-    for key, value in image_config.items():
-        result[key] = value
-    
-    return result
+# image schema with no defaults, used with `CONF_IMAGES` in the config
+IMAGE_SCHEMA_NO_DEFAULTS = {
+    **IMAGE_ID_SCHEMA,
+    **{cv.Optional(key): OPTIONS_SCHEMA[key] for key in OPTIONS},
+}
 
+BASE_SCHEMA = cv.Schema(
+    {
+        **IMAGE_ID_SCHEMA,
+        **OPTIONS_SCHEMA,
+    }
+).add_extra(validate_settings)
 
-def process_image_config(config):
-    """
-    Process image configuration by applying defaults and validating
-    """
-    if isinstance(config, dict) and CONF_DEFAULTS in config and CONF_IMAGES in config:
-        # Format with defaults and images
-        defaults = config[CONF_DEFAULTS]
-        processed_images = []
-        
-        for image in config[CONF_IMAGES]:
-            # Create new configuration by merging defaults and image
-            final_config = apply_defaults_to_image(defaults, image)
-            
-            # Ensure that required values are present
-            if CONF_TYPE not in final_config:
-                raise cv.Invalid("Type is required either in defaults or in image config")
-            
-            processed_images.append(final_config)
-        
-        return processed_images
-    else:
-        # Simple format - list of images or single image
-        if isinstance(config, list):
-            return config
-        else:
-            return [config]
-
-
-# Main configuration schema
-CONFIG_SCHEMA = cv.Any(
-    # Format with defaults and images
-    cv.Schema({
-        cv.Required(CONF_DEFAULTS): DEFAULTS_SCHEMA,
-        cv.Required(CONF_IMAGES): cv.ensure_list(IMAGE_SCHEMA),
-    }),
-    # Simple format - list of images
-    cv.ensure_list(cv.All(
-        IMAGE_SCHEMA.extend({
-            cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
-        }),
-        validate_image_config
-    )),
-    # Single image
-    cv.All(
-        IMAGE_SCHEMA.extend({
-            cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
-        }),
-        validate_image_config
-    )
+IMAGE_SCHEMA = BASE_SCHEMA.extend(
+    {
+        cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
+    }
 )
 
 
+def validate_defaults(value):
+    """
+    Validate the options for images with defaults
+    """
+    defaults = value[CONF_DEFAULTS]
+    result = []
+    for index, image in enumerate(value[CONF_IMAGES]):
+        type = image.get(CONF_TYPE, defaults.get(CONF_TYPE))
+        if type is None:
+            raise cv.Invalid(
+                "Type is required either in the image config or in the defaults",
+                path=[CONF_IMAGES, index],
+            )
+        type_class = IMAGE_TYPE[type]
+        # A default byte order should be simply ignored if the type does not support it
+        available_options = [*OPTIONS]
+        if (
+            not callable(getattr(type_class, "set_big_endian", None))
+            and CONF_BYTE_ORDER not in image
+        ):
+            available_options.remove(CONF_BYTE_ORDER)
+        
+        # Créer un nouveau dictionnaire au lieu de modifier l'existant
+        config = {}
+        # Copier les options avec les valeurs par défaut
+        for key in available_options:
+            config[key] = image.get(key, defaults.get(key))
+        # Copier les clés d'identification
+        for key in IMAGE_ID_SCHEMA:
+            if key.schema in image:
+                config[key.schema] = image[key.schema]
+        
+        validate_settings(config)
+        result.append(config)
+    return result
+
+
+def typed_image_schema(image_type):
+    """
+    Construct a schema for a specific image type, allowing transparency options
+    """
+    return cv.Any(
+        cv.Schema(
+            {
+                cv.Optional(t.lower()): cv.ensure_list(
+                    BASE_SCHEMA.extend(
+                        {
+                            cv.Optional(
+                                CONF_TRANSPARENCY, default=t
+                            ): validate_transparency((t,)),
+                            cv.Optional(CONF_TYPE, default=image_type): validate_type(
+                                (image_type,)
+                            ),
+                        }
+                    )
+                )
+                for t in IMAGE_TYPE[image_type].allow_config.intersection(
+                    TRANSPARENCY_TYPES
+                )
+            }
+        ),
+        # Allow a default configuration with no transparency preselected
+        cv.ensure_list(
+            BASE_SCHEMA.extend(
+                {
+                    cv.Optional(
+                        CONF_TRANSPARENCY, default=CONF_OPAQUE
+                    ): validate_transparency(),
+                    cv.Optional(CONF_TYPE, default=image_type): validate_type(
+                        (image_type,)
+                    ),
+                }
+            )
+        ),
+    )
+
+
+# The config schema can be a (possibly empty) single list of images,
+# or a dictionary of image types each with a list of images
+# or a dictionary with keys `defaults:` and `images:`
+
+
+def _config_schema(config):
+    if isinstance(config, list):
+        return cv.Schema([IMAGE_SCHEMA])(config)
+    if not isinstance(config, dict):
+        raise cv.Invalid(
+            "Badly formed image configuration, expected a list or a dictionary"
+        )
+    if CONF_DEFAULTS in config or CONF_IMAGES in config:
+        return validate_defaults(
+            cv.Schema(
+                {
+                    cv.Required(CONF_DEFAULTS): OPTIONS_SCHEMA,
+                    cv.Required(CONF_IMAGES): cv.ensure_list(IMAGE_SCHEMA_NO_DEFAULTS),
+                }
+            )(config)
+        )
+    if CONF_ID in config or CONF_FILE in config:
+        return cv.ensure_list(IMAGE_SCHEMA)([config])
+    return cv.Schema(
+        {cv.Optional(t.lower()): typed_image_schema(t) for t in IMAGE_TYPE}
+    )(config)
+
+
+CONFIG_SCHEMA = cv.All(_config_schema)
+
+
 async def write_image(config, all_frames=False):
-    # Special case: source = sd_card → image read at runtime, not at compile time
+    # Cas spécial : source = sd_card → image lue à l'exécution, pas à la compilation
     if config.get(CONF_SOURCE) == SOURCE_SD_CARD:
         _LOGGER.info(f"Skipping compile-time processing for SD card image: {config[CONF_FILE]}")
         return None, None, None, None, None, None
@@ -654,12 +687,12 @@ async def write_image(config, all_frames=False):
 
     dither = (
         Image.Dither.NONE
-        if config.get(CONF_DITHER, "NONE") == "NONE"
+        if config[CONF_DITHER] == "NONE"
         else Image.Dither.FLOYDSTEINBERG
     )
     type = config[CONF_TYPE]
-    transparency = config.get(CONF_TRANSPARENCY, CONF_OPAQUE)
-    invert_alpha = config.get(CONF_INVERT_ALPHA, False)
+    transparency = config[CONF_TRANSPARENCY]
+    invert_alpha = config[CONF_INVERT_ALPHA]
     frame_count = 1
     if all_frames:
         try:
@@ -691,35 +724,38 @@ async def write_image(config, all_frames=False):
 
 
 async def to_code(config):
-    # Process configuration
-    processed_images = process_image_config(config)
-    
-    for entry in processed_images:
-        # Check if it's an SD card image
-        if entry.get(CONF_SOURCE) == SOURCE_SD_CARD:
-            # Add dependency to sd_mmc_card component
+    if isinstance(config, list):
+        for entry in config:
+            await to_code(entry)
+    elif CONF_ID not in config:
+        for entry in config.values():
+            await to_code(entry)
+    else:
+        # Vérifier si c'est une image SD card
+        if config.get(CONF_SOURCE) == SOURCE_SD_CARD:
+            # Ajouter la dépendance au composant sd_mmc_card
             cg.add_define("USE_SD_MMC_CARD")
             
-            # Create SDCardImage instance
+            # Créer une instance SDCardImage
             var = cg.new_Pvariable(
-                entry[CONF_ID],
-                entry[CONF_FILE],  # path on SD
-                get_image_type_enum(entry[CONF_TYPE]),
-                get_transparency_enum(entry.get(CONF_TRANSPARENCY, CONF_OPAQUE))
+                config[CONF_ID],
+                config[CONF_FILE],  # chemin sur la SD
+                get_image_type_enum(config[CONF_TYPE]),
+                get_transparency_enum(config[CONF_TRANSPARENCY])
             )
             
-            # Configure options if present
-            if CONF_RESIZE in entry:
-                cg.add(var.set_resize(entry[CONF_RESIZE][0], entry[CONF_RESIZE][1]))
-            if entry.get(CONF_DITHER) == "FLOYDSTEINBERG":
+            # Configurer les options si présentes
+            if CONF_RESIZE in config:
+                cg.add(var.set_resize(config[CONF_RESIZE][0], config[CONF_RESIZE][1]))
+            if config.get(CONF_DITHER) == "FLOYDSTEINBERG":
                 cg.add(var.set_dither(True))
-            if entry.get(CONF_INVERT_ALPHA, False):
+            if config.get(CONF_INVERT_ALPHA, False):
                 cg.add(var.set_invert_alpha(True))
-            if byte_order := entry.get(CONF_BYTE_ORDER):
+            if byte_order := config.get(CONF_BYTE_ORDER):
                 cg.add(var.set_big_endian(byte_order == "BIG_ENDIAN"))
         else:
-            # Normal image (local, web, mdi, etc.)
-            prog_arr, width, height, image_type, trans_value, _ = await write_image(entry)
+            # Image normale (locale, web, mdi, etc.)
+            prog_arr, width, height, image_type, trans_value, _ = await write_image(config)
             cg.new_Pvariable(
-                entry[CONF_ID], prog_arr, width, height, image_type, trans_value
+                config[CONF_ID], prog_arr, width, height, image_type, trans_value
             )
