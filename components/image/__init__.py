@@ -453,9 +453,9 @@ def validate_type(image_types):
     return validate
 
 
-def validate_settings(value):
+def validate_image_config(value):
     """
-    Validate the settings for a single image configuration.
+    Validate a single image configuration after schema validation
     """
     # Skip validation for SD card images as they are processed at runtime
     if isinstance(value, dict) and value.get(CONF_SOURCE) == SOURCE_SD_CARD:
@@ -463,13 +463,16 @@ def validate_settings(value):
     
     # Ensure we're working with a dictionary
     if not isinstance(value, dict):
-        raise cv.Invalid("Image configuration must be a dictionary")
+        return value  # Let schema validation handle this
     
     # Check that required keys are present
     if CONF_TYPE not in value:
-        raise cv.Invalid("Type is required")
+        return value  # Let schema validation handle this
     
     conf_type = value[CONF_TYPE]
+    if conf_type not in IMAGE_TYPE:
+        return value  # Let schema validation handle this
+        
     type_class = IMAGE_TYPE[conf_type]
     
     # Use default value if transparency is not defined
@@ -524,7 +527,7 @@ IMAGE_SCHEMA = cv.All(
         cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
         cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
     }),
-    validate_settings,
+    validate_image_config,
 )
 
 # Schema for defaults
@@ -591,13 +594,19 @@ CONFIG_SCHEMA = cv.Any(
         cv.Required(CONF_IMAGES): cv.ensure_list(IMAGE_SCHEMA),
     }),
     # Simple format - list of images
-    cv.ensure_list(IMAGE_SCHEMA.extend({
-        cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
-    })),
+    cv.ensure_list(cv.All(
+        IMAGE_SCHEMA.extend({
+            cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
+        }),
+        validate_image_config
+    )),
     # Single image
-    IMAGE_SCHEMA.extend({
-        cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
-    })
+    cv.All(
+        IMAGE_SCHEMA.extend({
+            cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
+        }),
+        validate_image_config
+    )
 )
 
 
