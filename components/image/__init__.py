@@ -460,14 +460,22 @@ def validate_settings(value):
     # Skip validation for SD card images as they are processed at runtime
     if value.get(CONF_SOURCE) == SOURCE_SD_CARD:
         return value
-        
+    
+    # Vérifier que les clés requises sont présentes
+    if CONF_TYPE not in value:
+        raise cv.Invalid("Type is required")
+    
     conf_type = value[CONF_TYPE]
     type_class = IMAGE_TYPE[conf_type]
-    transparency = value[CONF_TRANSPARENCY].lower()
+    
+    # Utiliser une valeur par défaut si transparency n'est pas définie
+    transparency = value.get(CONF_TRANSPARENCY, CONF_OPAQUE).lower()
+    
     if transparency not in type_class.allow_config:
         raise cv.Invalid(
             f"Image format '{conf_type}' cannot have transparency: {transparency}"
         )
+    
     invert_alpha = value.get(CONF_INVERT_ALPHA, False)
     if (
         invert_alpha
@@ -475,12 +483,14 @@ def validate_settings(value):
         and CONF_INVERT_ALPHA not in type_class.allow_config
     ):
         raise cv.Invalid("No alpha channel to invert")
+    
     if value.get(CONF_BYTE_ORDER) is not None and not callable(
         getattr(type_class, "set_big_endian", None)
     ):
         raise cv.Invalid(
             f"Image format '{conf_type}' does not support byte order configuration"
         )
+    
     if file := value.get(CONF_FILE):
         file = Path(file)
         if is_svg_file(file):
@@ -502,20 +512,20 @@ IMAGE_SCHEMA = cv.Schema({
     cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
     cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
     cv.Optional(CONF_RESIZE): cv.dimensions,
-    cv.Optional(CONF_DITHER): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
-    cv.Optional(CONF_INVERT_ALPHA): cv.boolean,
+    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
+    cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
     cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
-    cv.Optional(CONF_TRANSPARENCY): validate_transparency(),
+    cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
 })
 
 # Schéma pour les defaults
 DEFAULTS_SCHEMA = cv.Schema({
     cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
     cv.Optional(CONF_RESIZE): cv.dimensions,
-    cv.Optional(CONF_DITHER): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
-    cv.Optional(CONF_INVERT_ALPHA): cv.boolean,
+    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
+    cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
     cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
-    cv.Optional(CONF_TRANSPARENCY): validate_transparency(),
+    cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
 })
 
 
@@ -540,52 +550,18 @@ def process_image_config(config):
             for key, value in image.items():
                 final_config[key] = value
             
-            # Valeurs par défaut hardcodées si pas définies
+            # S'assurer que les valeurs par défaut sont présentes
             if CONF_TYPE not in final_config:
                 raise cv.Invalid("Type is required either in defaults or in image config")
-            if CONF_DITHER not in final_config:
-                final_config[CONF_DITHER] = "NONE"
-            if CONF_INVERT_ALPHA not in final_config:
-                final_config[CONF_INVERT_ALPHA] = False
-            if CONF_TRANSPARENCY not in final_config:
-                final_config[CONF_TRANSPARENCY] = CONF_OPAQUE
             
-            # Valider la configuration finale
-            validate_settings(final_config)
             processed_images.append(final_config)
         
         return processed_images
     else:
-        # Format simple - liste d'images
+        # Format simple - liste d'images ou image unique
         if isinstance(config, list):
-            processed_images = []
-            for image in config:
-                # Valeurs par défaut
-                if CONF_DITHER not in image:
-                    image = dict(image)
-                    image[CONF_DITHER] = "NONE"
-                if CONF_INVERT_ALPHA not in image:
-                    if not isinstance(image, dict):
-                        image = dict(image)
-                    image[CONF_INVERT_ALPHA] = False
-                if CONF_TRANSPARENCY not in image:
-                    if not isinstance(image, dict):
-                        image = dict(image)
-                    image[CONF_TRANSPARENCY] = CONF_OPAQUE
-                
-                validate_settings(image)
-                processed_images.append(image)
-            return processed_images
+            return config
         else:
-            # Image unique
-            if CONF_DITHER not in config:
-                config[CONF_DITHER] = "NONE"
-            if CONF_INVERT_ALPHA not in config:
-                config[CONF_INVERT_ALPHA] = False
-            if CONF_TRANSPARENCY not in config:
-                config[CONF_TRANSPARENCY] = CONF_OPAQUE
-            
-            validate_settings(config)
             return [config]
 
 
@@ -651,12 +627,12 @@ async def write_image(config, all_frames=False):
 
     dither = (
         Image.Dither.NONE
-        if config[CONF_DITHER] == "NONE"
+        if config.get(CONF_DITHER, "NONE") == "NONE"
         else Image.Dither.FLOYDSTEINBERG
     )
     type = config[CONF_TYPE]
-    transparency = config[CONF_TRANSPARENCY]
-    invert_alpha = config[CONF_INVERT_ALPHA]
+    transparency = config.get(CONF_TRANSPARENCY, CONF_OPAQUE)
+    invert_alpha = config.get(CONF_INVERT_ALPHA, False)
     frame_count = 1
     if all_frames:
         try:
@@ -702,7 +678,7 @@ async def to_code(config):
                 entry[CONF_ID],
                 entry[CONF_FILE],  # chemin sur la SD
                 get_image_type_enum(entry[CONF_TYPE]),
-                get_transparency_enum(entry[CONF_TRANSPARENCY])
+                get_transparency_enum(entry.get(CONF_TRANSPARENCY, CONF_OPAQUE))
             )
             
             # Configurer les options si présentes
