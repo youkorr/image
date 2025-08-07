@@ -35,7 +35,6 @@ DEPENDENCIES = ["display"]
 image_ns = cg.esphome_ns.namespace("image")
 
 ImageType = image_ns.enum("ImageType")
-TransparencyType = image_ns.enum("TransparencyType")  # Correction du nom
 
 CONF_OPAQUE = "opaque"
 CONF_CHROMA_KEY = "chroma_key"
@@ -292,6 +291,8 @@ IMAGE_TYPE = {
     "RGBA": ReplaceWith("'type: RGB' and 'transparency: alpha_channel'"),
 }
 
+TransparencyType = image_ns.enum("TransparencyType")
+
 CONF_TRANSPARENCY = "transparency"
 
 # If the MDI file cannot be downloaded within this time, abort.
@@ -299,7 +300,7 @@ IMAGE_DOWNLOAD_TIMEOUT = 30  # seconds
 
 SOURCE_LOCAL = "local"
 SOURCE_WEB = "web"
-SOURCE_SD_CARD = "sd_card"
+
 SOURCE_MDI = "mdi"
 SOURCE_MDIL = "mdil"
 SOURCE_MEMORY = "memory"
@@ -311,7 +312,6 @@ MDI_SOURCES = {
 }
 
 Image_ = image_ns.class_("Image")
-SDCardImage_ = image_ns.class_("SDCardImage", Image_)
 
 INSTANCE_TYPE = Image_
 
@@ -419,22 +419,15 @@ WEB_SCHEMA = cv.All(
 )
 
 
-SD_CARD_SCHEMA = cv.All(
-    {
-        cv.Required(CONF_PATH): cv.string,
-    },
-    lambda value: value[CONF_PATH],
-)
-
 TYPED_FILE_SCHEMA = cv.typed_schema(
     {
         SOURCE_LOCAL: LOCAL_SCHEMA,
         SOURCE_WEB: WEB_SCHEMA,
-        SOURCE_SD_CARD: SD_CARD_SCHEMA,
     }
     | {source: mdi_schema(source) for source in MDI_SOURCES},
     key=CONF_SOURCE,
 )
+
 
 def validate_transparency(choices=TRANSPARENCY_TYPES):
     def validate(value):
@@ -457,10 +450,6 @@ def validate_settings(value):
     """
     Validate the settings for a single image configuration.
     """
-    # Skip validation for SD card images as they are processed at runtime
-    if value.get(CONF_SOURCE) == SOURCE_SD_CARD:
-        return value
-        
     conf_type = value[CONF_TYPE]
     type_class = IMAGE_TYPE[conf_type]
     transparency = value[CONF_TRANSPARENCY].lower()
@@ -556,17 +545,10 @@ def validate_defaults(value):
             and CONF_BYTE_ORDER not in image
         ):
             available_options.remove(CONF_BYTE_ORDER)
-        
-        # Créer un nouveau dictionnaire au lieu de modifier l'existant
-        config = {}
-        # Copier les options avec les valeurs par défaut
-        for key in available_options:
-            config[key] = image.get(key, defaults.get(key))
-        # Copier les clés d'identification
-        for key in IMAGE_ID_SCHEMA:
-            if key.schema in image:
-                config[key.schema] = image[key.schema]
-        
+        config = {
+            **{key: image.get(key, defaults.get(key)) for key in available_options},
+            **{key.schema: image[key.schema] for key in IMAGE_ID_SCHEMA},
+        }
         validate_settings(config)
         result.append(config)
     return result
@@ -640,15 +622,10 @@ def _config_schema(config):
     )(config)
 
 
-CONFIG_SCHEMA = cv.All(_config_schema)
+CONFIG_SCHEMA = _config_schema
 
 
 async def write_image(config, all_frames=False):
-    # Cas spécial : source = sd_card → image lue à l'exécution, pas à la compilation
-    if config.get(CONF_SOURCE) == SOURCE_SD_CARD:
-        _LOGGER.info(f"Skipping compile-time processing for SD card image: {config[CONF_FILE]}")
-        return None, None, None, None, None, None
-
     path = Path(config[CONF_FILE])
     if not path.is_file():
         raise core.EsphomeError(f"Could not load image file {path}")
@@ -705,8 +682,8 @@ async def write_image(config, all_frames=False):
     total_rows = height * frame_count
     encoder = IMAGE_TYPE[type](width, total_rows, transparency, dither, invert_alpha)
     if byte_order := config.get(CONF_BYTE_ORDER):
+        # Check for valid type has already been done in validate_settings
         encoder.set_big_endian(byte_order == "BIG_ENDIAN")
-
     for frame_index in range(frame_count):
         image.seek(frame_index)
         pixels = encoder.convert(image.resize((width, height)), path).getdata()
@@ -731,31 +708,7 @@ async def to_code(config):
         for entry in config.values():
             await to_code(entry)
     else:
-        # Vérifier si c'est une image SD card
-        if config.get(CONF_SOURCE) == SOURCE_SD_CARD:
-            # Ajouter la dépendance au composant sd_mmc_card
-            cg.add_define("USE_SD_MMC_CARD")
-            
-            # Créer une instance SDCardImage
-            var = cg.new_Pvariable(
-                config[CONF_ID],
-                config[CONF_FILE],  # chemin sur la SD
-                get_image_type_enum(config[CONF_TYPE]),
-                get_transparency_enum(config[CONF_TRANSPARENCY])
-            )
-            
-            # Configurer les options si présentes
-            if CONF_RESIZE in config:
-                cg.add(var.set_resize(config[CONF_RESIZE][0], config[CONF_RESIZE][1]))
-            if config.get(CONF_DITHER) == "FLOYDSTEINBERG":
-                cg.add(var.set_dither(True))
-            if config.get(CONF_INVERT_ALPHA, False):
-                cg.add(var.set_invert_alpha(True))
-            if byte_order := config.get(CONF_BYTE_ORDER):
-                cg.add(var.set_big_endian(byte_order == "BIG_ENDIAN"))
-        else:
-            # Image normale (locale, web, mdi, etc.)
-            prog_arr, width, height, image_type, trans_value, _ = await write_image(config)
-            cg.new_Pvariable(
-                config[CONF_ID], prog_arr, width, height, image_type, trans_value
-            )
+        prog_arr, width, height, image_type, trans_value, _ = await write_image(config)
+        cg.new_Pvariable(
+            config[CONF_ID], prog_arr, width, height, image_type, trans_value
+        )
