@@ -514,18 +514,29 @@ def validate_image_config(value):
     return value
 
 
+# First, define a base schema that can be extended
+BASE_IMAGE_SCHEMA = cv.Schema({
+    cv.Required(CONF_ID): cv.declare_id(Image_),
+    cv.Required(CONF_FILE): cv.Any(validate_file_shorthand, TYPED_FILE_SCHEMA),
+    cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
+    cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
+    cv.Optional(CONF_RESIZE): cv.dimensions,
+    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
+    cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
+    cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
+    cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
+})
+
 # Schema for individual image
 IMAGE_SCHEMA = cv.All(
-    cv.Schema({
-        cv.Required(CONF_ID): cv.declare_id(Image_),
-        cv.Required(CONF_FILE): cv.Any(validate_file_shorthand, TYPED_FILE_SCHEMA),
-        cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
-        cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
-        cv.Optional(CONF_RESIZE): cv.dimensions,
-        cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
-        cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
-        cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
-        cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
+    BASE_IMAGE_SCHEMA,
+    validate_image_config,
+)
+
+# Schema for images that require a type
+IMAGE_SCHEMA_WITH_REQUIRED_TYPE = cv.All(
+    BASE_IMAGE_SCHEMA.extend({
+        cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
     }),
     validate_image_config,
 )
@@ -594,19 +605,9 @@ CONFIG_SCHEMA = cv.Any(
         cv.Required(CONF_IMAGES): cv.ensure_list(IMAGE_SCHEMA),
     }),
     # Simple format - list of images
-    cv.ensure_list(cv.All(
-        IMAGE_SCHEMA.extend({
-            cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
-        }),
-        validate_image_config
-    )),
+    cv.ensure_list(IMAGE_SCHEMA_WITH_REQUIRED_TYPE),
     # Single image
-    cv.All(
-        IMAGE_SCHEMA.extend({
-            cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
-        }),
-        validate_image_config
-    )
+    IMAGE_SCHEMA_WITH_REQUIRED_TYPE
 )
 
 
