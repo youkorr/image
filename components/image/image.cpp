@@ -3,13 +3,6 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 
-#ifdef USE_SD_MMC_CARD
-#include "../sd_mmc_card/sd_mmc_card.h"
-#include "esphome/core/log.h"
-
-static const char *const TAG = "image.sd_card";
-#endif
-
 namespace esphome {
 namespace image {
 
@@ -93,7 +86,6 @@ void Image::draw(int x, int y, display::Display *display, Color color_on, Color 
       break;
   }
 }
-
 Color Image::get_pixel(int x, int y, const Color color_on, const Color color_off) const {
   if (x < 0 || x >= this->width_ || y < 0 || y >= this->height_)
     return color_off;
@@ -112,7 +104,6 @@ Color Image::get_pixel(int x, int y, const Color color_on, const Color color_off
       return color_off;
   }
 }
-
 #ifdef USE_LVGL
 lv_img_dsc_t *Image::get_lv_img_dsc() {
   // lazily construct lvgl image_dsc.
@@ -134,7 +125,7 @@ lv_img_dsc_t *Image::get_lv_img_dsc() {
 
       case IMAGE_TYPE_RGB:
 #if LV_COLOR_DEPTH == 32
-        switch (this->transparency_) {
+        switch (this->transparent_) {
           case TRANSPARENCY_ALPHA_CHANNEL:
             this->dsc_.header.cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
             break;
@@ -165,7 +156,7 @@ lv_img_dsc_t *Image::get_lv_img_dsc() {
             break;
         }
 #else
-        this->dsc_.header.cf = this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? LV_IMG_CF_RGB565A8 : LV_IMG_CF_RGB565;
+        this->dsc_.header.cf = this->transparent_ == TRANSPARENCY_ALPHA_CHANNEL ? LV_IMG_CF_RGB565A8 : LV_IMG_CF_RGB565;
 #endif
         break;
     }
@@ -179,7 +170,6 @@ bool Image::get_binary_pixel_(int x, int y) const {
   const uint32_t pos = x + y * width_8;
   return progmem_read_byte(this->data_start_ + (pos / 8u)) & (0x80 >> (pos % 8u));
 }
-
 Color Image::get_rgb_pixel_(int x, int y) const {
   const uint32_t pos = (x + y * this->width_) * this->bpp_ / 8;
   Color color = Color(progmem_read_byte(this->data_start_ + pos + 0), progmem_read_byte(this->data_start_ + pos + 1),
@@ -200,7 +190,6 @@ Color Image::get_rgb_pixel_(int x, int y) const {
   }
   return color;
 }
-
 Color Image::get_rgb565_pixel_(int x, int y) const {
   const uint8_t *pos = this->data_start_ + (x + y * this->width_) * this->bpp_ / 8;
   uint16_t rgb565 = encode_uint16(progmem_read_byte(pos), progmem_read_byte(pos + 1));
@@ -236,12 +225,10 @@ Color Image::get_grayscale_pixel_(int x, int y) const {
       return Color(gray, gray, gray, 0xFF);
   }
 }
-
 int Image::get_width() const { return this->width_; }
 int Image::get_height() const { return this->height_; }
 ImageType Image::get_type() const { return this->type_; }
-
-Image::Image(const uint8_t *data_start, int width, int height, ImageType type, TransparencyType transparency)
+Image::Image(const uint8_t *data_start, int width, int height, ImageType type, Transparency transparency)
     : width_(width), height_(height), type_(type), data_start_(data_start), transparency_(transparency) {
   switch (this->type_) {
     case IMAGE_TYPE_BINARY:
@@ -258,216 +245,6 @@ Image::Image(const uint8_t *data_start, int width, int height, ImageType type, T
       break;
   }
 }
-
-#ifdef USE_SD_MMC_CARD
-
-SDCardImage::SDCardImage(const std::string &path, ImageType type, TransparencyType transparency)
-    : Image(nullptr, 0, 0, type, transparency), path_(path), image_data_(nullptr), loaded_(false) {
-  // Trouver le composant SD card
-  this->sd_card_ = sd_mmc_card::global_sd_mmc_card;
-  if (this->sd_card_ == nullptr) {
-    ESP_LOGE(TAG, "SD card component not found");
-    return;
-  }
-}
-
-SDCardImage::~SDCardImage() {
-  this->cleanup_();
-}
-
-void SDCardImage::cleanup_() {
-  if (this->image_data_ != nullptr) {
-    free(this->image_data_);
-    this->image_data_ = nullptr;
-  }
-  this->loaded_ = false;
-}
-
-bool SDCardImage::load_image_() {
-  if (this->loaded_) {
-    return true;
-  }
-
-  if (this->sd_card_ == nullptr || !this->sd_card_->is_ready()) {
-    ESP_LOGW(TAG, "SD card not ready");
-    return false;
-  }
-
-  // Construire le chemin complet avec le point de montage
-  std::string full_path = this->sd_card_->get_mount_path() + "/" + this->path_;
-  
-  // Ouvrir le fichier
-  FILE *file = fopen(full_path.c_str(), "rb");
-  if (file == nullptr) {
-    ESP_LOGE(TAG, "Failed to open image file: %s", full_path.c_str());
-    return false;
-  }
-
-  // Pour simplifier, on assume que le fichier est au format BMP simple
-  // Vous devrez adapter selon vos besoins (PNG, JPEG, etc.)
-  
-  // Lire l'en-tête BMP (54 bytes minimum)
-  uint8_t header[54];
-  if (fread(header, 1, 54, file) != 54) {
-    ESP_LOGE(TAG, "Failed to read BMP header");
-    fclose(file);
-    return false;
-  }
-
-  // Vérifier la signature BMP
-  if (header[0] != 'B' || header[1] != 'M') {
-    ESP_LOGE(TAG, "Not a valid BMP file");
-    fclose(file);
-    return false;
-  }
-
-  // Extraire les dimensions
-  int width = *(int32_t*)&header[18];
-  int height = abs(*(int32_t*)&header[22]); // abs() pour gérer les BMP inversés
-  int bpp = *(int16_t*)&header[28];
-
-  ESP_LOGD(TAG, "BMP: %dx%d, %d bpp", width, height, bpp);
-
-  // Appliquer le redimensionnement si configuré
-  if (this->resize_width_ > 0 && this->resize_height_ > 0) {
-    width = this->resize_width_;
-    height = this->resize_height_;
-  }
-
-  // Calculer la taille des données selon le type d'image
-  size_t data_size;
-  switch (this->type_) {
-    case IMAGE_TYPE_BINARY:
-      data_size = ((width + 7) / 8) * height;
-      this->bpp_ = 1;
-      break;
-    case IMAGE_TYPE_GRAYSCALE:
-      data_size = width * height;
-      this->bpp_ = 8;
-      break;
-    case IMAGE_TYPE_RGB565:
-      data_size = width * height * (this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 3 : 2);
-      this->bpp_ = this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 24 : 16;
-      break;
-    case IMAGE_TYPE_RGB:
-      data_size = width * height * (this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 4 : 3);
-      this->bpp_ = this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 32 : 24;
-      break;
-    default:
-      ESP_LOGE(TAG, "Unsupported image type");
-      fclose(file);
-      return false;
-  }
-
-  // Allouer la mémoire
-  this->cleanup_();
-  this->image_data_ = (uint8_t*)malloc(data_size);
-  if (this->image_data_ == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate memory for image data (%zu bytes)", data_size);
-    fclose(file);
-    return false;
-  }
-
-  // Lire et traiter les données d'image
-  uint32_t data_offset = *(uint32_t*)&header[10];
-  fseek(file, data_offset, SEEK_SET);
-  
-  // Lecture simplifiée - à adapter selon le format source et cible
-  // Cette implémentation basique lit les données brutes
-  size_t bytes_read = fread(this->image_data_, 1, data_size, file);
-  if (bytes_read != data_size) {
-    ESP_LOGW(TAG, "Read %zu bytes, expected %zu", bytes_read, data_size);
-  }
-
-  fclose(file);
-
-  // Traitement post-lecture
-  this->process_image_data_();
-
-  // Mettre à jour les propriétés de l'image
-  this->width_ = width;
-  this->height_ = height;
-  this->data_start_ = this->image_data_;
-  this->loaded_ = true;
-
-  ESP_LOGD(TAG, "Successfully loaded image: %s (%dx%d)", this->path_.c_str(), width, height);
-  return true;
-}
-
-void SDCardImage::process_image_data_() {
-  if (this->image_data_ == nullptr) return;
-
-  // Appliquer l'inversion alpha si configurée
-  if (this->invert_alpha_) {
-    size_t pixel_count = this->width_ * this->height_;
-    
-    switch (this->type_) {
-      case IMAGE_TYPE_BINARY:
-        // Inverser tous les bits
-        for (size_t i = 0; i < ((this->width_ + 7) / 8) * this->height_; i++) {
-          this->image_data_[i] ^= 0xFF;
-        }
-        break;
-        
-      case IMAGE_TYPE_GRAYSCALE:
-        // Inverser les valeurs de gris
-        for (size_t i = 0; i < pixel_count; i++) {
-          this->image_data_[i] ^= 0xFF;
-        }
-        break;
-        
-      case IMAGE_TYPE_RGB:
-        if (this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL) {
-          // Inverser seulement le canal alpha
-          for (size_t i = 0; i < pixel_count; i++) {
-            this->image_data_[i * 4 + 3] ^= 0xFF;
-          }
-        }
-        break;
-        
-      case IMAGE_TYPE_RGB565:
-        if (this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL) {
-          // Inverser seulement le canal alpha
-          for (size_t i = 0; i < pixel_count; i++) {
-            this->image_data_[i * 3 + 2] ^= 0xFF;
-          }
-        }
-        break;
-    }
-  }
-
-  // Appliquer l'ordre des bytes si configuré pour RGB565
-  if (this->type_ == IMAGE_TYPE_RGB565 && !this->big_endian_) {
-    size_t stride = this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 3 : 2;
-    for (size_t i = 0; i < this->width_ * this->height_ * stride; i += stride) {
-      // Échanger les bytes pour RGB565
-      uint8_t temp = this->image_data_[i];
-      this->image_data_[i] = this->image_data_[i + 1];
-      this->image_data_[i + 1] = temp;
-    }
-  }
-}
-
-void SDCardImage::draw(int x, int y, display::Display *display, Color color_on, Color color_off) {
-  if (!this->load_image_()) {
-    ESP_LOGW(TAG, "Failed to load image for drawing");
-    return;
-  }
-  
-  // Utiliser l'implémentation de la classe parent
-  Image::draw(x, y, display, color_on, color_off);
-}
-
-Color SDCardImage::get_pixel(int x, int y, Color color_on, Color color_off) const {
-  if (!const_cast<SDCardImage*>(this)->load_image_()) {
-    return color_off;
-  }
-  
-  // Utiliser l'implémentation de la classe parent
-  return Image::get_pixel(x, y, color_on, color_off);
-}
-
-#endif  // USE_SD_MMC_CARD
 
 }  // namespace image
 }  // namespace esphome
