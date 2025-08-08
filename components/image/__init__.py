@@ -5,7 +5,9 @@ import io
 import logging
 from pathlib import Path
 import re
-
+include "driver/sdmmc_host.h"
+include "driver/sdmmc_defs.h"
+include "../sd_mmc_card/sd_mmc_card.h"
 from PIL import Image, UnidentifiedImageError
 
 from esphome import core, external_files
