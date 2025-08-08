@@ -662,28 +662,66 @@ CONFIG_SCHEMA = _config_schema
 
 async def write_image(config, all_frames=False):
     path_str = config[CONF_FILE]
-
-    # Si la source est sd_card/... on tente de résoudre vers un fichier local
+    
+    # Gestion spéciale pour les images SD card:
+    # - si le fichier existe DANS le dossier de config au build, on le traite normalement
+    # - si le fichier n'existe pas au build (c'est la plupart des cas pour sd_card/...),
+    #   on génère un placeholder (tableau d'octets à 0) ET on renvoie sd_runtime=True + sd_path
     if isinstance(path_str, str) and (path_str.startswith("sd_card/") or path_str.startswith("sd_card//")):
         _LOGGER.info(f"Processing SD card image: {path_str}")
-        # Résolution vers le chemin relatif du projet (dossier de configuration)
+        # try to resolve local copy in project dir (if user put sd_card/... into the repo)
         try:
             resolved = Path(CORE.relative_config_path(path_str))
         except Exception:
-            # fallback : essayer normalisation
             resolved = Path(CORE.relative_config_path(path_str.replace("sd_card//", "sd_card/")))
+
         if resolved.is_file():
+            _LOGGER.info(f"Found SD image in project dir; will process at build-time: {resolved}")
+            # fall through to normal local-file processing by assigning path = resolved
             path = resolved
-            _LOGGER.info(f"Found SD image in project dir: {path}")
+            sd_runtime = False
+            sd_path = None
         else:
-            # Si le fichier SD n'est pas présent lors de la compilation, on échoue
-            raise core.EsphomeError(
-                f"Could not find SD card image '{path_str}' in the config directory (checked: {resolved}). "
-                "Put the file under your project directory (e.g. ./sd_card/...) so it can be processed at build time."
+            # --- runtime SD mode: do NOT attempt to open the SD file at build ---
+            sd_runtime = True
+            sd_path = path_str
+            # Dimensions: use resize if provided, otherwise default small size
+            resize = config.get(CONF_RESIZE)
+            if resize:
+                width, height = resize
+            else:
+                width, height = 64, 64
+                _LOGGER.warning(f"No resize specified for SD card image {path_str}, using default size {width}x{height}")
+
+            dither = (
+                Image.Dither.NONE
+                if config[CONF_DITHER] == "NONE"
+                else Image.Dither.FLOYDSTEINBERG
             )
+            type = config[CONF_TYPE]
+            transparency = config[CONF_TRANSPARENCY]
+            invert_alpha = config[CONF_INVERT_ALPHA]
+            frame_count = 1
+
+            # Create encoder and leave data as zeros (placeholder).
+            encoder = IMAGE_TYPE[type](width, height, transparency, dither, invert_alpha)
+            if byte_order := config.get(CONF_BYTE_ORDER):
+                encoder.set_big_endian(byte_order == "BIG_ENDIAN")
+
+            rhs = [HexInt(x) for x in encoder.data]
+            prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
+            image_type = get_image_type_enum(type)
+            trans_value = get_transparency_enum(encoder.transparency)
+
+            _LOGGER.info(f"SD card image configured for runtime load: {sd_path} - placeholder {width}x{height}")
+            return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path
+
     else:
+        sd_runtime = False
+        sd_path = None
         path = Path(path_str)
 
+    # Normal build-time processing for local/web/mdi/svg files (identical to original)
     if not path.is_file():
         raise core.EsphomeError(f"Could not load image file {path}")
 
@@ -754,7 +792,7 @@ async def write_image(config, all_frames=False):
     image_type = get_image_type_enum(type)
     trans_value = get_transparency_enum(encoder.transparency)
 
-    return prog_arr, width, height, image_type, trans_value, frame_count
+    return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path
 
 
 async def to_code(config):
@@ -765,8 +803,17 @@ async def to_code(config):
         for entry in config.values():
             await to_code(entry)
     else:
-        prog_arr, width, height, image_type, trans_value, _ = await write_image(config)
-        cg.new_Pvariable(
-            config[CONF_ID], prog_arr, width, height, image_type, trans_value
-        )
+        prog_arr, width, height, image_type, trans_value, _, sd_runtime, sd_path = await write_image(config)
+        var = cg.new_Pvariable(config[CONF_ID], prog_arr, width, height, image_type, trans_value)
+
+        # Si image configurée pour lecture runtime depuis la SD -> transmettre le chemin au C++
+        if sd_runtime:
+            # Ces setters doivent être implémentés dans ta classe C++ Image:
+            #   void set_sd_path(const std::string &path);
+            #   void set_sd_runtime(bool enabled);
+            cg.add(var.set_sd_path(sd_path))
+            cg.add(var.set_sd_runtime(True))
+
+        # (on garde le comportement original de création de la variable)
+
 
