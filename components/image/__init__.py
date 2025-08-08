@@ -733,41 +733,31 @@ async def write_image(config, all_frames=False):
             sd_runtime = False
             sd_path_return = None
         else:
-            # runtime SD mode: don't open the file at build-time
-            sd_runtime = True
-            sd_path_return = sd_path
+            # runtime SD mode: créer une image minimale vide pour la compilation
+            _LOGGER.info(f"SD card image will be loaded at runtime: {sd_path}")
+            
             resize = config.get(CONF_RESIZE)
             if resize:
                 width, height = resize
             else:
-                # conservative default (can be overridden by resize)
-                width, height = 64, 64
-                _LOGGER.warning(f"No resize specified for SD card image {path_str}, using default size {width}x{height}")
+                # Taille minimale pour éviter les gros placeholders
+                width, height = 1, 1
+                _LOGGER.info(f"Using minimal placeholder size 1x1 for SD card image {path_str}")
 
-            dither = (
-                Image.Dither.NONE
-                if config[CONF_DITHER] == "NONE"
-                else Image.Dither.FLOYDSTEINBERG
-            )
             type = config[CONF_TYPE]
             transparency = config[CONF_TRANSPARENCY]
-            invert_alpha = config[CONF_INVERT_ALPHA]
             frame_count = 1
-
-            # Create encoder and leave data zeros (placeholder).
-            encoder = IMAGE_TYPE[type](width, height, transparency, dither, invert_alpha)
-            if byte_order := config.get(CONF_BYTE_ORDER):
-                # only set if supported
-                if hasattr(encoder, "set_big_endian"):
-                    encoder.set_big_endian(byte_order == "BIG_ENDIAN")
-
-            rhs = [HexInt(x) for x in encoder.data]
+            
+            # Créer un tableau vide minimal - juste assez pour la compilation
+            # L'image réelle sera chargée au runtime
+            minimal_data = [0]  # Un seul byte pour éviter le gaspillage mémoire
+            
+            rhs = [HexInt(x) for x in minimal_data]
             prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
             image_type = get_image_type_enum(type)
-            trans_value = get_transparency_enum(encoder.transparency)
+            trans_value = get_transparency_enum(transparency)
 
-            _LOGGER.info(f"SD card image configured for runtime load: {sd_path_return} - placeholder {width}x{height}")
-            return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path_return
+            return prog_arr, width, height, image_type, trans_value, frame_count, True, sd_path
 
     else:
         sd_runtime = False
@@ -867,8 +857,7 @@ async def to_code(config):
             #   void set_sd_runtime(bool enabled);
             cg.add(var.set_sd_path(sd_path))
             cg.add(var.set_sd_runtime(True))
-
-        # (on garde le comportement original de création de la variable)
+            _LOGGER.info(f"Image {config[CONF_ID]} configured for SD card runtime loading: {sd_path}")
 
 
 
