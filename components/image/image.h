@@ -29,7 +29,9 @@ class Image : public display::BaseImage {
   Image(const uint8_t *data_start, int width, int height, ImageType type, Transparency transparency);
 
   Color get_pixel(int x, int y, Color color_on = display::COLOR_ON, Color color_off = display::COLOR_OFF) const override;
-  
+  int get_width() const;
+  int get_height() const;
+  ImageType get_type() const;
   
   const uint8_t *get_data_start() const { return this->data_start_; }
   
