@@ -300,7 +300,7 @@ IMAGE_DOWNLOAD_TIMEOUT = 30  # seconds
 
 SOURCE_LOCAL = "local"
 SOURCE_WEB = "web"
-SOURCE_SD_CARD = "sd_card"  # Ajout du type SD card
+SOURCE_SD_CARD = "sd_card"
 
 SOURCE_MDI = "mdi"
 SOURCE_MDIL = "mdil"
@@ -341,6 +341,7 @@ def sd_card_path(value):
 def download_file(url, path):
     external_files.download_content(url, path, IMAGE_DOWNLOAD_TIMEOUT)
     return str(path)
+
 
 
 def download_gh_svg(value, source):
