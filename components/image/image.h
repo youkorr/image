@@ -1,10 +1,7 @@
 #pragma once
 #include "esphome/core/color.h"
 #include "esphome/components/display/display.h"
-#include "driver/sdmmc_host.h"
-#include "driver/sdmmc_defs.h"
 #include "../sd_mmc_card/sd_mmc_card.h"
-#include "esp_vfs_fat.h"
 
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_proxy.h"
@@ -47,6 +44,7 @@ class Image : public display::BaseImage {
 #ifdef USE_LVGL
   lv_img_dsc_t *get_lv_img_dsc();
 #endif
+
  protected:
   bool get_binary_pixel_(int x, int y) const;
   Color get_rgb_pixel_(int x, int y) const;
@@ -60,6 +58,7 @@ class Image : public display::BaseImage {
   Transparency transparency_;
   size_t bpp_{};
   size_t stride_{};
+  
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
 #endif
