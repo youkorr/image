@@ -330,6 +330,14 @@ def local_path(value):
     return str(CORE.relative_config_path(value))
 
 
+def sd_card_path(value):
+    """Handle SD card path - return the path as-is for SD card sources"""
+    value = value[CONF_PATH] if isinstance(value, dict) else value
+    # Pour les chemins SD card, on retourne le chemin tel quel
+    # Le chemin sera géré au runtime par l'ESP
+    return str(value)
+
+
 def download_file(url, path):
     external_files.download_content(url, path, IMAGE_DOWNLOAD_TIMEOUT)
     return str(path)
@@ -375,6 +383,11 @@ def validate_cairosvg_installed():
 
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
+    
+    # Vérification pour les chemins SD card
+    if value.startswith("sd_card/") or value.startswith("sd_card//"):
+        return value  # Retourne le chemin tel quel pour SD card
+    
     parts = value.strip().split(":")
     if len(parts) == 2 and parts[0] in MDI_SOURCES:
         match = re.match(r"^[a-zA-Z0-9\-]+$", parts[1])
@@ -471,6 +484,13 @@ def validate_settings(value):
             f"Image format '{conf_type}' does not support byte order configuration"
         )
     if file := value.get(CONF_FILE):
+        file_path = str(file)
+        
+        # Pour les fichiers SD card, on évite la validation locale
+        if file_path.startswith("sd_card/") or file_path.startswith("sd_card//"):
+            _LOGGER.info(f"SD card image configured: {file_path}")
+            return value
+            
         file = Path(file)
         if is_svg_file(file):
             validate_cairosvg_installed()
@@ -626,7 +646,53 @@ CONFIG_SCHEMA = _config_schema
 
 
 async def write_image(config, all_frames=False):
-    path = Path(config[CONF_FILE])
+    path_str = config[CONF_FILE]
+    
+    # Gestion spéciale pour les images SD card
+    if isinstance(path_str, str) and (path_str.startswith("sd_card/") or path_str.startswith("sd_card//")):
+        _LOGGER.info(f"SD card image detected: {path_str}")
+        # Pour les images SD card, on génère un placeholder ou on utilise une image par défaut
+        # car l'image réelle sera chargée au runtime par l'ESP
+        
+        # Créer une image placeholder de 1x1 pixel pour la compilation
+        placeholder_image = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+        
+        # Configuration de l'encodeur avec des dimensions minimales
+        width, height = 1, 1
+        resize = config.get(CONF_RESIZE)
+        if resize:
+            width, height = resize
+        
+        dither = (
+            Image.Dither.NONE
+            if config[CONF_DITHER] == "NONE"
+            else Image.Dither.FLOYDSTEINBERG
+        )
+        type = config[CONF_TYPE]
+        transparency = config[CONF_TRANSPARENCY]
+        invert_alpha = config[CONF_INVERT_ALPHA]
+        frame_count = 1
+        
+        encoder = IMAGE_TYPE[type](width, height, transparency, dither, invert_alpha)
+        if byte_order := config.get(CONF_BYTE_ORDER):
+            encoder.set_big_endian(byte_order == "BIG_ENDIAN")
+            
+        # Encoder l'image placeholder
+        pixels = encoder.convert(placeholder_image.resize((width, height)), path_str).getdata()
+        for row in range(height):
+            for col in range(width):
+                encoder.encode(pixels[row * width + col])
+            encoder.end_row()
+        
+        rhs = [HexInt(x) for x in encoder.data]
+        prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
+        image_type = get_image_type_enum(type)
+        trans_value = get_transparency_enum(encoder.transparency)
+        
+        return prog_arr, width, height, image_type, trans_value, frame_count
+    
+    # Code original pour les autres types d'images
+    path = Path(path_str)
     if not path.is_file():
         raise core.EsphomeError(f"Could not load image file {path}")
 
