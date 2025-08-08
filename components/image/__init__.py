@@ -625,12 +625,7 @@ def typed_image_schema(image_type):
                 }
             )
         ),
-    )
-
-
-# The config schema can be a (possibly empty) single list of images,
-# or a dictionary of image types each with a list of images
-# or a dictionary with keys `defaults:` and `images:`
+    ) 
 
 
 def _config_schema(config):
@@ -659,37 +654,93 @@ def _config_schema(config):
 CONFIG_SCHEMA = _config_schema
 
 
+#
+# --- helper: normalise une entrée en un chemin utilisé par le runtime SD (/sdcard/...)
+#
+def normalize_to_sd_path(path: str) -> str:
+    p = str(path).strip()
+    p = p.replace("\\", "/")
+    # collapse multiple slashes
+    p = re.sub(r"/+", "/", p)
+    # If contains sdcard or sd_card -> return /sdcard/...
+    m = re.search(r"(sd[_]?card)(/.*)?", p, flags=re.I)
+    if m:
+        rest = m.group(2) or ""
+        # ensure leading slash in rest
+        if not rest.startswith("/"):
+            rest = "/" + rest.lstrip("/")
+        return "/sdcard" + rest
+    # If absolute path provided (starts with '/'), map into /sdcard/<rest>
+    if p.startswith("/"):
+        rest = p.lstrip("/")
+        return "/sdcard/" + rest
+    # Otherwise treat as filename or relative path -> put under /sdcard/
+    return "/sdcard/" + p.lstrip("/")
+
+
+def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
+    """
+    Attempt to find a local copy inside the project dir for build-time processing.
+    We try several candidate locations that users commonly use:
+      - <sd_path> relative to project (sdcard/...)
+      - original path stripped of leading slash
+      - sd_card/<basename>
+      - sdcard/<basename>
+    """
+    candidates = []
+    try:
+        candidates.append(Path(CORE.relative_config_path(sd_path.lstrip("/"))))
+    except Exception:
+        pass
+    try:
+        candidates.append(Path(CORE.relative_config_path(orig_path.lstrip("/"))))
+    except Exception:
+        pass
+    try:
+        candidates.append(Path(CORE.relative_config_path("sd_card/" + Path(sd_path).name)))
+    except Exception:
+        pass
+    try:
+        candidates.append(Path(CORE.relative_config_path("sdcard/" + Path(sd_path).name)))
+    except Exception:
+        pass
+
+    for c in candidates:
+        if c and c.is_file():
+            return c
+    return None
+
 
 async def write_image(config, all_frames=False):
     path_str = config[CONF_FILE]
-    
-    # Gestion spéciale pour les images SD card:
-    # - si le fichier existe DANS le dossier de config au build, on le traite normalement
-    # - si le fichier n'existe pas au build (c'est la plupart des cas pour sd_card/...),
-    #   on génère un placeholder (tableau d'octets à 0) ET on renvoie sd_runtime=True + sd_path
-    if isinstance(path_str, str) and (path_str.startswith("sd_card/") or path_str.startswith("sd_card//")):
-        _LOGGER.info(f"Processing SD card image: {path_str}")
-        # try to resolve local copy in project dir (if user put sd_card/... into the repo)
-        try:
-            resolved = Path(CORE.relative_config_path(path_str))
-        except Exception:
-            resolved = Path(CORE.relative_config_path(path_str.replace("sd_card//", "sd_card/")))
 
-        if resolved.is_file():
+    # Detecte si l'utilisateur veut charger depuis la carte SD (divers formats acceptés).
+    is_sd_request = False
+    if isinstance(path_str, str):
+        ps = str(path_str).strip()
+        # If contains sdcard or sd_card or starts with '/' (we treat absolute as sdcard), mark as sd.
+        if re.search(r"(sd[_]?card)", ps, flags=re.I) or ps.startswith("/"):
+            is_sd_request = True
+
+    if is_sd_request:
+        _LOGGER.info(f"Processing SD card image request: {path_str}")
+        sd_path = normalize_to_sd_path(path_str)
+        # try to resolve a copy in the project dir for build-time conversion
+        resolved = try_resolve_local_candidate(str(path_str), sd_path)
+        if resolved is not None:
             _LOGGER.info(f"Found SD image in project dir; will process at build-time: {resolved}")
-            # fall through to normal local-file processing by assigning path = resolved
             path = resolved
             sd_runtime = False
-            sd_path = None
+            sd_path_return = None
         else:
-            # --- runtime SD mode: do NOT attempt to open the SD file at build ---
+            # runtime SD mode: don't open the file at build-time
             sd_runtime = True
-            sd_path = path_str
-            # Dimensions: use resize if provided, otherwise default small size
+            sd_path_return = sd_path
             resize = config.get(CONF_RESIZE)
             if resize:
                 width, height = resize
             else:
+                # conservative default (can be overridden by resize)
                 width, height = 64, 64
                 _LOGGER.warning(f"No resize specified for SD card image {path_str}, using default size {width}x{height}")
 
@@ -703,22 +754,24 @@ async def write_image(config, all_frames=False):
             invert_alpha = config[CONF_INVERT_ALPHA]
             frame_count = 1
 
-            # Create encoder and leave data as zeros (placeholder).
+            # Create encoder and leave data zeros (placeholder).
             encoder = IMAGE_TYPE[type](width, height, transparency, dither, invert_alpha)
             if byte_order := config.get(CONF_BYTE_ORDER):
-                encoder.set_big_endian(byte_order == "BIG_ENDIAN")
+                # only set if supported
+                if hasattr(encoder, "set_big_endian"):
+                    encoder.set_big_endian(byte_order == "BIG_ENDIAN")
 
             rhs = [HexInt(x) for x in encoder.data]
             prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
             image_type = get_image_type_enum(type)
             trans_value = get_transparency_enum(encoder.transparency)
 
-            _LOGGER.info(f"SD card image configured for runtime load: {sd_path} - placeholder {width}x{height}")
-            return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path
+            _LOGGER.info(f"SD card image configured for runtime load: {sd_path_return} - placeholder {width}x{height}")
+            return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path_return
 
     else:
         sd_runtime = False
-        sd_path = None
+        sd_path_return = None
         path = Path(path_str)
 
     # Normal build-time processing for local/web/mdi/svg files (identical to original)
@@ -778,7 +831,8 @@ async def write_image(config, all_frames=False):
     encoder = IMAGE_TYPE[type](width, total_rows, transparency, dither, invert_alpha)
     if byte_order := config.get(CONF_BYTE_ORDER):
         # Check for valid type has already been done in validate_settings
-        encoder.set_big_endian(byte_order == "BIG_ENDIAN")
+        if hasattr(encoder, "set_big_endian"):
+            encoder.set_big_endian(byte_order == "BIG_ENDIAN")
     for frame_index in range(frame_count):
         image.seek(frame_index)
         pixels = encoder.convert(image.resize((width, height)), path).getdata()
@@ -792,7 +846,7 @@ async def write_image(config, all_frames=False):
     image_type = get_image_type_enum(type)
     trans_value = get_transparency_enum(encoder.transparency)
 
-    return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path
+    return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path_return
 
 
 async def to_code(config):
@@ -815,5 +869,6 @@ async def to_code(config):
             cg.add(var.set_sd_runtime(True))
 
         # (on garde le comportement original de création de la variable)
+
 
 
