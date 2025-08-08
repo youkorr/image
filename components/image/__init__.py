@@ -659,12 +659,7 @@ def _config_schema(config):
 CONFIG_SCHEMA = _config_schema
 
 
-def create_placeholder_image(width, height, image_type):
-    """Crée une image placeholder pour les images SD card"""
-    if image_type in ["BINARY", "GRAYSCALE"]:
-        return Image.new('L', (width, height), 0)
-    else:
-        return Image.new('RGBA', (width, height), (0, 0, 0, 0))
+
 
 
 async def write_image(config, all_frames=False):
