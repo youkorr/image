@@ -718,8 +718,9 @@ async def write_image(config, all_frames=False):
     is_sd_request = False
     if isinstance(path_str, str):
         ps = str(path_str).strip()
-        # If contains sdcard or sd_card or starts with '/' (we treat absolute as sdcard), mark as sd.
-        if re.search(r"(sd[_]?card)", ps, flags=re.I) or ps.startswith("/"):
+        # Only treat as SD card if explicitly contains sd_card/sdcard OR starts with /sdcard
+        if (re.search(r"(sd[_]?card)", ps, flags=re.I) or 
+            ps.startswith("/sdcard/")):
             is_sd_request = True
 
     if is_sd_request:
@@ -858,6 +859,8 @@ async def to_code(config):
             cg.add(var.set_sd_path(sd_path))
             cg.add(var.set_sd_runtime(True))
             _LOGGER.info(f"Image {config[CONF_ID]} configured for SD card runtime loading: {sd_path}")
+
+        # (on garde le comportement original de création de la variable)
 
 
 
