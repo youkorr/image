@@ -300,6 +300,7 @@ IMAGE_DOWNLOAD_TIMEOUT = 30  # seconds
 
 SOURCE_LOCAL = "local"
 SOURCE_WEB = "web"
+SOURCE_SD_CARD = "sd_card"  # Ajout du type SD card
 
 SOURCE_MDI = "mdi"
 SOURCE_MDIL = "mdil"
@@ -333,8 +334,7 @@ def local_path(value):
 def sd_card_path(value):
     """Handle SD card path - return the path as-is for SD card sources"""
     value = value[CONF_PATH] if isinstance(value, dict) else value
-    # Pour les chemins SD card, on retourne le chemin tel quel
-    # Le chemin sera géré au runtime par l'ESP
+    _LOGGER.info(f"SD card image path configured: {value}")
     return str(value)
 
 
@@ -360,6 +360,9 @@ def download_image(value):
 def is_svg_file(file):
     if not file:
         return False
+    # Pour les fichiers SD card, on ne peut pas vérifier le contenu
+    if isinstance(file, str) and (file.startswith("sd_card/") or file.startswith("sd_card//")):
+        return file.lower().endswith('.svg')
     with open(file, "rb") as f:
         return "<svg" in str(f.read(1024))
 
@@ -384,8 +387,9 @@ def validate_cairosvg_installed():
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
-    # Vérification pour les chemins SD card
+    # Vérification pour les chemins SD card - amélioration de la détection
     if value.startswith("sd_card/") or value.startswith("sd_card//"):
+        _LOGGER.info(f"SD card image detected: {value}")
         return value  # Retourne le chemin tel quel pour SD card
     
     parts = value.strip().split(":")
@@ -407,6 +411,14 @@ LOCAL_SCHEMA = cv.All(
         cv.Required(CONF_PATH): cv.file_,
     },
     local_path,
+)
+
+# Ajout du schéma SD card
+SD_CARD_SCHEMA = cv.All(
+    {
+        cv.Required(CONF_PATH): cv.string,
+    },
+    sd_card_path,
 )
 
 
@@ -436,6 +448,7 @@ TYPED_FILE_SCHEMA = cv.typed_schema(
     {
         SOURCE_LOCAL: LOCAL_SCHEMA,
         SOURCE_WEB: WEB_SCHEMA,
+        SOURCE_SD_CARD: SD_CARD_SCHEMA,  # Ajout du schéma SD card
     }
     | {source: mdi_schema(source) for source in MDI_SOURCES},
     key=CONF_SOURCE,
@@ -645,23 +658,29 @@ def _config_schema(config):
 CONFIG_SCHEMA = _config_schema
 
 
+def create_placeholder_image(width, height, image_type):
+    """Crée une image placeholder pour les images SD card"""
+    if image_type in ["BINARY", "GRAYSCALE"]:
+        return Image.new('L', (width, height), 0)
+    else:
+        return Image.new('RGBA', (width, height), (0, 0, 0, 0))
+
+
 async def write_image(config, all_frames=False):
     path_str = config[CONF_FILE]
     
     # Gestion spéciale pour les images SD card
     if isinstance(path_str, str) and (path_str.startswith("sd_card/") or path_str.startswith("sd_card//")):
-        _LOGGER.info(f"SD card image detected: {path_str}")
-        # Pour les images SD card, on génère un placeholder ou on utilise une image par défaut
-        # car l'image réelle sera chargée au runtime par l'ESP
+        _LOGGER.info(f"Processing SD card image: {path_str}")
         
-        # Créer une image placeholder de 1x1 pixel pour la compilation
-        placeholder_image = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
-        
-        # Configuration de l'encodeur avec des dimensions minimales
-        width, height = 1, 1
+        # Utiliser les dimensions de resize si spécifiées, sinon des dimensions par défaut
         resize = config.get(CONF_RESIZE)
         if resize:
             width, height = resize
+        else:
+            # Dimensions par défaut pour les images SD card
+            width, height = 64, 64
+            _LOGGER.warning(f"No resize specified for SD card image {path_str}, using default size {width}x{height}")
         
         dither = (
             Image.Dither.NONE
@@ -673,12 +692,17 @@ async def write_image(config, all_frames=False):
         invert_alpha = config[CONF_INVERT_ALPHA]
         frame_count = 1
         
+        # Créer une image placeholder appropriée
+        placeholder_image = create_placeholder_image(width, height, type)
+        
         encoder = IMAGE_TYPE[type](width, height, transparency, dither, invert_alpha)
         if byte_order := config.get(CONF_BYTE_ORDER):
             encoder.set_big_endian(byte_order == "BIG_ENDIAN")
             
         # Encoder l'image placeholder
-        pixels = encoder.convert(placeholder_image.resize((width, height)), path_str).getdata()
+        converted_image = encoder.convert(placeholder_image, path_str)
+        pixels = converted_image.getdata()
+        
         for row in range(height):
             for col in range(width):
                 encoder.encode(pixels[row * width + col])
@@ -689,6 +713,7 @@ async def write_image(config, all_frames=False):
         image_type = get_image_type_enum(type)
         trans_value = get_transparency_enum(encoder.transparency)
         
+        _LOGGER.info(f"SD card image placeholder created: {width}x{height}, type: {type}")
         return prog_arr, width, height, image_type, trans_value, frame_count
     
     # Code original pour les autres types d'images
