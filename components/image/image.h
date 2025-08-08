@@ -1,6 +1,10 @@
 #pragma once
 #include "esphome/core/color.h"
 #include "esphome/components/display/display.h"
+#include "driver/sdmmc_host.h"
+#include "driver/sdmmc_defs.h"
+#include "../sd_mmc_card/sd_mmc_card.h"
+#include "esp_vfs_fat.h"
 
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_proxy.h"
