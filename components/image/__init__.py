@@ -660,60 +660,30 @@ CONFIG_SCHEMA = _config_schema
 
 
 
-
-
 async def write_image(config, all_frames=False):
     path_str = config[CONF_FILE]
-    
-    # Gestion spéciale pour les images SD card
+
+    # Si la source est sd_card/... on tente de résoudre vers un fichier local
     if isinstance(path_str, str) and (path_str.startswith("sd_card/") or path_str.startswith("sd_card//")):
         _LOGGER.info(f"Processing SD card image: {path_str}")
-        
-        # Utiliser les dimensions de resize si spécifiées, sinon des dimensions par défaut
-        resize = config.get(CONF_RESIZE)
-        if resize:
-            width, height = resize
+        # Résolution vers le chemin relatif du projet (dossier de configuration)
+        try:
+            resolved = Path(CORE.relative_config_path(path_str))
+        except Exception:
+            # fallback : essayer normalisation
+            resolved = Path(CORE.relative_config_path(path_str.replace("sd_card//", "sd_card/")))
+        if resolved.is_file():
+            path = resolved
+            _LOGGER.info(f"Found SD image in project dir: {path}")
         else:
-            # Dimensions par défaut pour les images SD card
-            width, height = 64, 64
-            _LOGGER.warning(f"No resize specified for SD card image {path_str}, using default size {width}x{height}")
-        
-        dither = (
-            Image.Dither.NONE
-            if config[CONF_DITHER] == "NONE"
-            else Image.Dither.FLOYDSTEINBERG
-        )
-        type = config[CONF_TYPE]
-        transparency = config[CONF_TRANSPARENCY]
-        invert_alpha = config[CONF_INVERT_ALPHA]
-        frame_count = 1
-        
-        # Créer une image placeholder appropriée
-        placeholder_image = create_placeholder_image(width, height, type)
-        
-        encoder = IMAGE_TYPE[type](width, height, transparency, dither, invert_alpha)
-        if byte_order := config.get(CONF_BYTE_ORDER):
-            encoder.set_big_endian(byte_order == "BIG_ENDIAN")
-            
-        # Encoder l'image placeholder
-        converted_image = encoder.convert(placeholder_image, path_str)
-        pixels = converted_image.getdata()
-        
-        for row in range(height):
-            for col in range(width):
-                encoder.encode(pixels[row * width + col])
-            encoder.end_row()
-        
-        rhs = [HexInt(x) for x in encoder.data]
-        prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
-        image_type = get_image_type_enum(type)
-        trans_value = get_transparency_enum(encoder.transparency)
-        
-        _LOGGER.info(f"SD card image placeholder created: {width}x{height}, type: {type}")
-        return prog_arr, width, height, image_type, trans_value, frame_count
-    
-    # Code original pour les autres types d'images
-    path = Path(path_str)
+            # Si le fichier SD n'est pas présent lors de la compilation, on échoue
+            raise core.EsphomeError(
+                f"Could not find SD card image '{path_str}' in the config directory (checked: {resolved}). "
+                "Put the file under your project directory (e.g. ./sd_card/...) so it can be processed at build time."
+            )
+    else:
+        path = Path(path_str)
+
     if not path.is_file():
         raise core.EsphomeError(f"Could not load image file {path}")
 
@@ -799,3 +769,4 @@ async def to_code(config):
         cg.new_Pvariable(
             config[CONF_ID], prog_arr, width, height, image_type, trans_value
         )
+
