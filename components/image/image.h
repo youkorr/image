@@ -1,6 +1,7 @@
 #pragma once
 #include "esphome/core/color.h"
 #include "esphome/components/display/display.h"
+#include "../sd_mmc_card/sd_mmc_card.h"
 
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_proxy.h"
@@ -40,6 +41,9 @@ class Image : public display::BaseImage {
 
   bool has_transparency() const { return this->transparency_ != TRANSPARENCY_OPAQUE; }
 
+  void set_sd_runtime(bool enabled) { this->sd_runtime_ = enabled; }
+  bool load_from_sd();
+
 #ifdef USE_LVGL
   lv_img_dsc_t *get_lv_img_dsc();
 #endif
@@ -56,6 +60,12 @@ class Image : public display::BaseImage {
   Transparency transparency_;
   size_t bpp_{};
   size_t stride_{};
+
+  // Ajout pour lecture SD
+  std::string sd_path_{};
+  bool sd_runtime_{false};
+  std::vector<uint8_t> sd_buffer_;  // stockage image chargée
+
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
 #endif
