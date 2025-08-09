@@ -43,10 +43,10 @@ class Image : public display::BaseImage, public Component {
 
   Color get_pixel(int x, int y, Color color_on = display::COLOR_ON, Color color_off = display::COLOR_OFF) const;
 
-  int get_width() const override { return width_; }
-  int get_height() const override { return height_; }
+  int get_width() const override;
+  int get_height() const override;
   const uint8_t *get_data_start() const { return this->data_start_; }
-  ImageType get_type() const { return this->type_; }
+  ImageType get_type() const;
   int get_bpp() const { return this->bpp_; }
 
   size_t get_width_stride() const { return stride_; }
