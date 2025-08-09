@@ -81,7 +81,7 @@ class Image : public display::BaseImage {
   std::string sd_path_;
   bool sd_runtime_ = false;
 
-  bool load_from_sd()
+  bool load_from_sd();
   
 
 
