@@ -712,68 +712,54 @@ def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
 
 
 async def write_image(config, all_frames=False):
+    """Fonction principale de traitement des images."""
     path_str = config[CONF_FILE]
 
-    # Detecte si l'utilisateur veut charger depuis la carte SD (divers formats acceptés).
-    is_sd_request = False
-    if isinstance(path_str, str):
-        ps = str(path_str).strip()
-        # Only treat as SD card if explicitly contains sd_card/sdcard OR starts with /sdcard
-        if (re.search(r"(sd[_]?card)", ps, flags=re.I) or 
-            ps.startswith("/sdcard/")):
-            is_sd_request = True
-
-    if is_sd_request:
-        _LOGGER.info(f"Processing SD card image request: {path_str}")
-        sd_path = normalize_to_sd_path(path_str)
-        # try to resolve a copy in the project dir for build-time conversion
-        resolved = try_resolve_local_candidate(str(path_str), sd_path)
-        if resolved is not None:
-            _LOGGER.info(f"Found SD image in project dir; will process at build-time: {resolved}")
-            path = resolved
-            sd_runtime = False
-            sd_path_return = None
+    # Détecte si c'est une image de la carte SD
+    if is_sd_card_path(path_str):
+        _LOGGER.info(f"Traitement d'une image SD: {path_str}")
+        sd_path = normalize_sd_path(path_str)
+        
+        # Gestion du resize - obligatoire pour les images SD
+        if CONF_RESIZE in config:
+            width, height = config[CONF_RESIZE]
+            _LOGGER.info(f"Redimensionnement configuré pour {path_str}: {width}x{height}")
         else:
-            # runtime SD mode: créer une image minimale vide pour la compilation
-            _LOGGER.info(f"SD card image will be loaded at runtime: {sd_path}")
-            
-            resize = config.get(CONF_RESIZE)
-            if resize:
-                width, height = resize
-            else:
-                # Taille minimale pour éviter les gros placeholders
-                width, height = 1, 1
-                _LOGGER.info(f"Using minimal placeholder size 1x1 for SD card image {path_str}")
+            # Si pas de resize spécifié, utiliser une taille minimale
+            width, height = 1, 1  # Taille minimale pour le placeholder
+            _LOGGER.info(f"Utilisation d'une taille minimale {width}x{height} pour l'image SD {path_str}")
 
-            type = config[CONF_TYPE]
-            transparency = config[CONF_TRANSPARENCY]
-            frame_count = 1
-            
-            # Créer un tableau vide minimal - juste assez pour la compilation
-            # L'image réelle sera chargée au runtime
-            minimal_data = [0]  # Un seul byte pour éviter le gaspillage mémoire
-            
-            rhs = [HexInt(x) for x in minimal_data]
-            prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
-            image_type = get_image_type_enum(type)
-            trans_value = get_transparency_enum(transparency)
+        type = config[CONF_TYPE]
+        transparency = config[CONF_TRANSPARENCY]
+        
+        # Crée un tableau minimal pour la compilation
+        minimal_data = [0]  # Un seul byte pour le placeholder
+        
+        rhs = [HexInt(x) for x in minimal_data]
+        prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
+        image_type = get_image_type_enum(type)
+        trans_value = get_transparency_enum(transparency)
 
-            return prog_arr, width, height, image_type, trans_value, frame_count, True, sd_path
+        if byte_order := config.get(CONF_BYTE_ORDER):
+            _LOGGER.info(f"Configuration byte_order pour {path_str}: {byte_order}")
 
-    else:
-        sd_runtime = False
-        sd_path_return = None
-        path = Path(path_str)
+        _LOGGER.info(f"""Configuration de l'image SD:
+            - Fichier: {sd_path}
+            - Dimensions: {width}x{height}
+            - Type: {type}
+            - Transparence: {transparency}
+        """)
 
-    # Normal build-time processing for local/web/mdi/svg files (identical to original)
+        return prog_arr, width, height, image_type, trans_value, 1, True, sd_path
+
+    # Garde le code existant pour les images non-SD
+    path = Path(path_str)
     if not path.is_file():
-        raise core.EsphomeError(f"Could not load image file {path}")
+        raise core.EsphomeError(f"Impossible de charger le fichier image {path}")
 
     resize = config.get(CONF_RESIZE)
     if is_svg_file(path):
-        # Local import so use of non-SVG files needn't require cairosvg installed
         from cairosvg import svg2png
-
         if not resize:
             resize = (None, None)
         with open(path, "rb") as file:
@@ -788,16 +774,15 @@ async def write_image(config, all_frames=False):
         image = Image.open(path)
         width, height = image.size
         if resize:
-            # Preserve aspect ratio
-            new_width_max = min(width, resize[0])
-            new_height_max = min(height, resize[1])
-            ratio = min(new_width_max / width, new_height_max / height)
+            ratio = min(
+                min(width, resize[0]) / width,
+                min(height, resize[1]) / height
+            )
             width, height = int(width * ratio), int(height * ratio)
 
     if not resize and (width > 500 or height > 500):
         _LOGGER.warning(
-            'The image "%s" you requested is very big. Please consider'
-            " using the resize parameter.",
+            'L\'image "%s" est très grande. Considérez utiliser le paramètre resize.',
             path,
         )
 
@@ -810,20 +795,22 @@ async def write_image(config, all_frames=False):
     transparency = config[CONF_TRANSPARENCY]
     invert_alpha = config[CONF_INVERT_ALPHA]
     frame_count = 1
+
     if all_frames:
         try:
             frame_count = image.n_frames
         except AttributeError:
             pass
         if frame_count <= 1:
-            _LOGGER.warning("Image file %s has no animation frames", path)
+            _LOGGER.warning("Le fichier image %s n'a pas de frames d'animation", path)
 
     total_rows = height * frame_count
     encoder = IMAGE_TYPE[type](width, total_rows, transparency, dither, invert_alpha)
+    
     if byte_order := config.get(CONF_BYTE_ORDER):
-        # Check for valid type has already been done in validate_settings
         if hasattr(encoder, "set_big_endian"):
             encoder.set_big_endian(byte_order == "BIG_ENDIAN")
+
     for frame_index in range(frame_count):
         image.seek(frame_index)
         pixels = encoder.convert(image.resize((width, height)), path).getdata()
@@ -835,9 +822,9 @@ async def write_image(config, all_frames=False):
     rhs = [HexInt(x) for x in encoder.data]
     prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
     image_type = get_image_type_enum(type)
-    trans_value = get_transparency_enum(encoder.transparency)
+    trans_value = get_transparency_enum(transparency)
 
-    return prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path_return
+    return prog_arr, width, height, image_type, trans_value, frame_count, False, None
 
 
 async def to_code(config):
