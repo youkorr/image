@@ -338,6 +338,18 @@ def sd_card_path(value):
     return str(value)
 
 
+def is_sd_card_path(path_str: str) -> bool:
+    """Check if a path is an SD card path"""
+    if not isinstance(path_str, str):
+        return False
+    path_str = path_str.strip()
+    return (
+        path_str.startswith("sd_card/") or 
+        path_str.startswith("sd_card//") or
+        path_str.startswith("/sdcard/")
+    )
+
+
 def download_file(url, path):
     external_files.download_content(url, path, IMAGE_DOWNLOAD_TIMEOUT)
     return str(path)
@@ -362,7 +374,7 @@ def is_svg_file(file):
     if not file:
         return False
     # Pour les fichiers SD card, on ne peut pas vérifier le contenu
-    if isinstance(file, str) and (file.startswith("sd_card/") or file.startswith("sd_card//")):
+    if isinstance(file, str) and is_sd_card_path(file):
         return file.lower().endswith('.svg')
     with open(file, "rb") as f:
         return "<svg" in str(f.read(1024))
@@ -389,7 +401,7 @@ def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
     # Vérification pour les chemins SD card - amélioration de la détection
-    if value.startswith("sd_card/") or value.startswith("sd_card//"):
+    if is_sd_card_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
         return value  # Retourne le chemin tel quel pour SD card
     
@@ -501,7 +513,7 @@ def validate_settings(value):
         file_path = str(file)
         
         # Pour les fichiers SD card, on évite la validation locale
-        if file_path.startswith("sd_card/") or file_path.startswith("sd_card//"):
+        if is_sd_card_path(file_path):
             _LOGGER.info(f"SD card image configured: {file_path}")
             return value
             
@@ -658,6 +670,7 @@ CONFIG_SCHEMA = _config_schema
 # --- helper: normalise une entrée en un chemin utilisé par le runtime SD (/sdcard/...)
 #
 def normalize_to_sd_path(path: str) -> str:
+    """Normalize path to SD card format (/sdcard/...)"""
     p = str(path).strip()
     p = p.replace("\\", "/")
     # collapse multiple slashes
@@ -718,7 +731,7 @@ async def write_image(config, all_frames=False):
     # Détecte si c'est une image de la carte SD
     if is_sd_card_path(path_str):
         _LOGGER.info(f"Traitement d'une image SD: {path_str}")
-        sd_path = normalize_sd_path(path_str)
+        sd_path = normalize_to_sd_path(path_str)
         
         # Gestion du resize - obligatoire pour les images SD
         if CONF_RESIZE in config:
