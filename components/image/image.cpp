@@ -285,11 +285,27 @@ Color Image::get_grayscale_pixel_(int x, int y) const {
   }
 }
 
-// Note: These implementations are now removed from cpp file since they're in header
-// int Image::get_width() const { return this->width_; }
-// int Image::get_height() const { return this->height_; }
-// ImageType Image::get_type() const { return this->type_; }
-// Image::Image(const uint8_t *data_start, int width, int height, ImageType type, Transparency transparency) { ... }
+int Image::get_width() const { return this->width_; }
+int Image::get_height() const { return this->height_; }
+ImageType Image::get_type() const { return this->type_; }
+
+Image::Image(const uint8_t *data_start, int width, int height, ImageType type, Transparency transparency)
+    : width_(width), height_(height), type_(type), data_start_(data_start), transparency_(transparency) {
+  switch (this->type_) {
+    case IMAGE_TYPE_BINARY:
+      this->bpp_ = 1;
+      break;
+    case IMAGE_TYPE_GRAYSCALE:
+      this->bpp_ = 8;
+      break;
+    case IMAGE_TYPE_RGB565:
+      this->bpp_ = transparency == TRANSPARENCY_ALPHA_CHANNEL ? 24 : 16;
+      break;
+    case IMAGE_TYPE_RGB:
+      this->bpp_ = this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 32 : 24;
+      break;
+  }
+}
 
 }  // namespace image
 }  // namespace esphome
