@@ -41,6 +41,8 @@ class Image : public display::BaseImage {
 
   bool has_transparency() const { return this->transparency_ != TRANSPARENCY_OPAQUE; }
 
+  
+  void set_sd_path(const std::string &path) { this->sd_path_ = path; }
   void set_sd_runtime(bool enabled) { this->sd_runtime_ = enabled; }
   bool load_from_sd();
 
