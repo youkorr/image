@@ -746,7 +746,7 @@ async def write_image(config, all_frames=False):
         transparency = config[CONF_TRANSPARENCY]
         
         # Crée un tableau minimal pour la compilation
-        minimal_data = [0]  # Un seul byte pour le placeholder
+        
         
         rhs = [HexInt(x) for x in minimal_data]
         prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
