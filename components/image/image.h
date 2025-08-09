@@ -2,6 +2,9 @@
 #include "esphome/core/color.h"
 #include "esphome/components/display/display.h"
 #include "../sd_mmc_card/sd_mmc_card.h"
+#include <vector>
+#include <string>
+#include <algorithm>
 
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_proxy.h"
@@ -26,22 +29,24 @@ enum Transparency {
 class Image : public display::BaseImage {
  public:
   Image(const uint8_t *data_start, int width, int height, ImageType type, Transparency transparency);
+  
   Color get_pixel(int x, int y, Color color_on = display::COLOR_ON, Color color_off = display::COLOR_OFF) const;
+  
   int get_width() const override;
   int get_height() const override;
   const uint8_t *get_data_start() const { return this->data_start_; }
   ImageType get_type() const;
-
   int get_bpp() const { return this->bpp_; }
-
+  
   /// Return the stride of the image in bytes, that is, the distance in bytes
   /// between two consecutive rows of pixels.
   size_t get_width_stride() const { return (this->width_ * this->get_bpp() + 7u) / 8u; }
-  void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
-
-  bool has_transparency() const { return this->transparency_ != TRANSPARENCY_OPAQUE; }
-
   
+  void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
+  
+  bool has_transparency() const { return this->transparency_ != TRANSPARENCY_OPAQUE; }
+  
+  // Méthodes pour les images SD
   void set_sd_path(const std::string &path) { this->sd_path_ = path; }
   void set_sd_runtime(bool enabled) { this->sd_runtime_ = enabled; }
   bool load_from_sd();
@@ -49,24 +54,33 @@ class Image : public display::BaseImage {
 #ifdef USE_LVGL
   lv_img_dsc_t *get_lv_img_dsc();
 #endif
+
  protected:
   bool get_binary_pixel_(int x, int y) const;
   Color get_rgb_pixel_(int x, int y) const;
   Color get_rgb565_pixel_(int x, int y) const;
   Color get_grayscale_pixel_(int x, int y) const;
+  
+  // Nouvelle méthode pour lire les données (SD buffer ou placeholder)
+  uint8_t get_data_byte_(size_t pos) const;
+  
+  // Méthodes utilitaires pour les images SD
+  bool decode_jpeg_from_sd();
+  size_t get_expected_buffer_size() const;
 
+  // Propriétés existantes
   int width_;
   int height_;
   ImageType type_;
-  const uint8_t *data_start_;
+  const uint8_t *data_start_;  // Placeholder de compilation
   Transparency transparency_;
   size_t bpp_{};
   size_t stride_{};
 
-  // Ajout pour lecture SD
- std::string sd_path_{};
+  // Nouvelles propriétés pour les images SD
+  std::string sd_path_{};
   bool sd_runtime_{false};
-  std::vector<uint8_t> sd_buffer_;  // stockage image chargée
+  std::vector<uint8_t> sd_buffer_;  // Buffer pour l'image chargée depuis la SD
 
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
