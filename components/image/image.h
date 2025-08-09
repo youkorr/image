@@ -80,6 +80,8 @@ class Image : public display::BaseImage {
   std::vector<uint8_t> sd_buffer_;
   std::string sd_path_;
   bool sd_runtime_ = false;
+
+  uint8_t get_data_byte_(size_t pos) const;
   
 
 
