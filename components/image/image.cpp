@@ -5,11 +5,6 @@
 #include "esphome/core/log.h"
 #include "../sd_mmc_card/sd_mmc_card.h"
 
-// Pour le décodage JPEG sur ESP32
-#ifdef USE_ESP32
-#include "esp_jpeg_dec.h"
-#endif
-
 namespace esphome {
 namespace image {
 
@@ -17,7 +12,7 @@ static const char *const TAG = "image";
 
 void Image::draw(int x, int y, display::Display *display, Color color_on, Color color_off) {
   // Essaye de charger depuis la SD si pas encore fait
-  if (sd_runtime_ && !sd_buffer_.empty() == false && !sd_path_.empty()) {
+  if (sd_runtime_ && sd_buffer_.empty() && !sd_path_.empty()) {
     load_from_sd();
   }
   
@@ -143,8 +138,28 @@ bool Image::load_from_sd() {
 
   ESP_LOGI(TAG, "Loading image from SD: %s", sd_path_.c_str());
 
-  // Vérifie l'accès à la SD (utilise votre composant sd_mmc_card)
-  // Remplacez par la méthode appropriée selon votre composant SD
+  // Ici vous devez utiliser votre composant sd_mmc_card pour lire le fichier
+  // et décoder l'image JPG/PNG avec les décodeurs natifs d'ESPHome
+  
+  // Exemple d'utilisation (à adapter selon votre API SD):
+  /*
+  std::vector<uint8_t> file_data;
+  if (!your_sd_component->read_file(sd_path_, file_data)) {
+    ESP_LOGE(TAG, "Failed to read file from SD: %s", sd_path_.c_str());
+    return false;
+  }
+  
+  // Utilise les décodeurs d'image natifs d'ESPHome
+  bool success = decode_image(file_data);
+  if (!success) {
+    ESP_LOGE(TAG, "Failed to decode image: %s", sd_path_.c_str());
+    sd_buffer_.clear();
+    return false;
+  }
+  */
+  
+  // Pour l'instant, créé un motif de test
+  ESP_LOGW(TAG, "SD file reading not implemented - using test pattern");
   
   // Calcule la taille attendue du buffer
   size_t expected_size = get_expected_buffer_size();
@@ -154,101 +169,119 @@ bool Image::load_from_sd() {
     sd_buffer_.resize(expected_size, 0);
     ESP_LOGI(TAG, "Allocated SD buffer: %zu bytes", expected_size);
   }
-
-  // Détermine le type de fichier
-  std::string path_lower = sd_path_;
-  std::transform(path_lower.begin(), path_lower.end(), path_lower.begin(), ::tolower);
   
-  bool success = false;
-  if (path_lower.find(".jpg") != std::string::npos || path_lower.find(".jpeg") != std::string::npos) {
-    success = decode_jpeg_from_sd();
-  } else if (path_lower.find(".png") != std::string::npos) {
-    ESP_LOGW(TAG, "PNG decoding not implemented yet");
-    success = false;
-  } else {
-    ESP_LOGE(TAG, "Unsupported image format: %s", sd_path_.c_str());
-    success = false;
-  }
-
-  if (success) {
-    ESP_LOGI(TAG, "Successfully loaded image from SD: %s", sd_path_.c_str());
-  } else {
-    ESP_LOGE(TAG, "Failed to load image from SD: %s", sd_path_.c_str());
-    // Vide le buffer en cas d'échec pour utiliser le placeholder
-    sd_buffer_.clear();
-  }
-
-  return success;
+  // Crée un motif de test selon le type d'image
+  create_test_pattern();
+  
+  ESP_LOGI(TAG, "Test pattern loaded (replace with real image decoding)");
+  return true;
 }
 
-bool Image::decode_jpeg_from_sd() {
-#ifdef USE_ESP32
-  // Ici vous devez utiliser votre composant sd_mmc_card pour lire le fichier
-  // Je vais montrer un exemple générique, adaptez selon votre API
+bool Image::decode_image(const std::vector<uint8_t> &file_data) {
+  // Cette méthode devrait utiliser les décodeurs natifs d'ESPHome
+  // Vous devrez probablement utiliser des fonctions comme :
+  // - image::decode_image() pour PNG/JPG
+  // - ou directement les décodeurs internes selon la version d'ESPHome
   
-  ESP_LOGI(TAG, "Attempting to decode JPEG: %s", sd_path_.c_str());
+  ESP_LOGI(TAG, "Decoding image data (%zu bytes)", file_data.size());
   
-  // Exemple d'utilisation de votre composant SD (à adapter)
-  // Remplacez par les méthodes de votre composant sd_mmc_card
+  // Calcule la taille attendue du buffer
+  size_t expected_size = get_expected_buffer_size();
+  
+  // Alloue le buffer si nécessaire
+  if (sd_buffer_.size() != expected_size) {
+    sd_buffer_.resize(expected_size, 0);
+  }
   
   /*
-  // Supposons que votre composant a une méthode read_file
-  std::vector<uint8_t> jpeg_data;
-  if (!your_sd_component->read_file(sd_path_, jpeg_data)) {
-    ESP_LOGE(TAG, "Failed to read file from SD: %s", sd_path_.c_str());
+  // Exemple d'utilisation des décodeurs ESPHome (à adapter selon la version):
+  
+  // Détecte le format
+  bool is_png = file_data.size() > 8 && 
+                file_data[0] == 0x89 && file_data[1] == 0x50 && 
+                file_data[2] == 0x4E && file_data[3] == 0x47;
+  
+  bool is_jpg = file_data.size() > 2 && 
+                file_data[0] == 0xFF && file_data[1] == 0xD8;
+  
+  if (is_png) {
+    // Utilise le décodeur PNG d'ESPHome
+    // return decode_png(file_data.data(), file_data.size(), sd_buffer_.data(), sd_buffer_.size());
+  } else if (is_jpg) {
+    // Utilise le décodeur JPEG d'ESPHome
+    // return decode_jpeg(file_data.data(), file_data.size(), sd_buffer_.data(), sd_buffer_.size());
+  } else {
+    ESP_LOGE(TAG, "Unsupported image format");
     return false;
   }
   */
   
-  // Pour l'instant, méthode de test - remplacez par votre lecture SD
-  ESP_LOGW(TAG, "SD file reading not implemented - using placeholder");
-  
-  // Rempli le buffer avec un motif de test pour vérifier que ça marche
+  // Pour l'instant, retourne true avec un pattern de test
+  create_test_pattern();
+  return true;
+}
+
+void Image::create_test_pattern() {
+  // Crée un motif de test selon le type d'image
   for (size_t i = 0; i < sd_buffer_.size(); i++) {
-    // Motif de test coloré pour RGB565
-    if (type_ == IMAGE_TYPE_RGB565) {
-      if (i % 2 == 0) {
-        sd_buffer_[i] = (i / 1000) % 256;  // Pattern rouge/vert
-      } else {
-        sd_buffer_[i] = ((i + 500) / 1000) % 256;  // Pattern bleu
+    switch (type_) {
+      case IMAGE_TYPE_RGB565: {
+        // Motif coloré pour RGB565
+        int pixel = i / 2;
+        int x = pixel % width_;
+        int y = pixel / width_;
+        if (i % 2 == 0) {
+          // Byte bas
+          sd_buffer_[i] = ((x * 32 / width_) << 3) | (y * 8 / height_);
+        } else {
+          // Byte haut  
+          sd_buffer_[i] = ((x * 32 / width_) << 3) | ((y * 64 / height_) >> 3);
+        }
+        break;
       }
-    } else {
-      sd_buffer_[i] = (i * 123) % 256;  // Pattern général
+      case IMAGE_TYPE_RGB: {
+        // Motif RGB
+        int pixel = i / 3;
+        int x = pixel % width_;
+        int y = pixel / width_;
+        int component = i % 3;
+        if (component == 0) {
+          sd_buffer_[i] = (x * 255) / width_;  // Rouge
+        } else if (component == 1) {
+          sd_buffer_[i] = (y * 255) / height_; // Vert
+        } else {
+          sd_buffer_[i] = ((x + y) * 127) / (width_ + height_); // Bleu
+        }
+        break;
+      }
+      case IMAGE_TYPE_GRAYSCALE: {
+        // Gradient en niveaux de gris
+        int pixel = i;
+        int x = pixel % width_;
+        int y = pixel / width_;
+        sd_buffer_[i] = ((x + y) * 255) / (width_ + height_);
+        break;
+      }
+      case IMAGE_TYPE_BINARY: {
+        // Motif en damier pour binaire
+        int bit_pos = i * 8;
+        uint8_t byte_val = 0;
+        for (int b = 0; b < 8 && (bit_pos + b) < (width_ * height_); b++) {
+          int pixel = bit_pos + b;
+          int x = pixel % width_;
+          int y = pixel / width_;
+          if ((x / 8 + y / 8) % 2) {
+            byte_val |= (0x80 >> b);
+          }
+        }
+        sd_buffer_[i] = byte_val;
+        break;
+      }
+      default:
+        sd_buffer_[i] = (i * 123) % 256;
+        break;
     }
   }
-  
-  ESP_LOGI(TAG, "Test pattern loaded (replace with real JPEG decoding)");
-  return true;
-  
-  /*
-  // Vraie implémentation JPEG (une fois que vous avez les données du fichier):
-  esp_jpeg_image_cfg_t jpeg_cfg = {
-    .indata = jpeg_data.data(),
-    .indata_size = jpeg_data.size(),
-    .outbuf = sd_buffer_.data(),
-    .outbuf_size = sd_buffer_.size(),
-    .out_format = JPEG_IMAGE_FORMAT_RGB565,  // Selon votre format
-    .out_scale = JPEG_IMAGE_SCALE_0,
-    .flags = {
-      .swap_color_bytes = (type_ == IMAGE_TYPE_RGB565) ? 1 : 0,
-    }
-  };
-  
-  esp_jpeg_image_output_t outimg;
-  esp_err_t err = esp_jpeg_decode(&jpeg_cfg, &outimg);
-  
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "JPEG decode failed: %s", esp_err_to_name(err));
-    return false;
-  }
-  
-  ESP_LOGI(TAG, "JPEG decoded: %dx%d", outimg.width, outimg.height);
-  return true;
-  */
-#else
-  ESP_LOGE(TAG, "JPEG decoding only supported on ESP32");
-  return false;
-#endif
 }
 
 size_t Image::get_expected_buffer_size() const {
@@ -398,6 +431,19 @@ lv_img_dsc_t *Image::get_lv_img_dsc() {
   return &this->dsc_;
 }
 #endif  // USE_LVGL
+
+// Méthodes pour la configuration runtime depuis la SD
+void Image::set_sd_path(const std::string &path) {
+  sd_path_ = path;
+  sd_buffer_.clear(); // Force le rechargement
+}
+
+void Image::set_sd_runtime(bool enable) {
+  sd_runtime_ = enable;
+  if (!enable) {
+    sd_buffer_.clear(); // Libère la mémoire si pas utilisé
+  }
+}
 
 // Reste du code existant...
 int Image::get_width() const { return this->width_; }
