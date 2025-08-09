@@ -431,7 +431,7 @@ SD_CARD_SCHEMA = cv.All(
     {
         cv.Required(CONF_PATH): cv.string,
     },
-    sd_card_path,
+    sd_card_path,download_image,
 )
 
 
