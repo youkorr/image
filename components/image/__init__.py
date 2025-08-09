@@ -764,8 +764,18 @@ async def write_image(config, all_frames=False):
         # Calcul de la taille du buffer
         buffer_size = calculate_buffer_size(width, height, type, transparency)
         
-        # Validation de la taille - évite les buffers trop grands
-        max_buffer_size = 2 * 1024 * 1024  # 2MB max
+        # Validation de la taille - permet des images plus grandes pour ESP32-S3/P4 avec PSRAM
+        # Note: Pour les images HTTP/local, la taille peut être bien plus grande car le 
+        # redimensionnement se fait à la compilation. Pour les images SD, c'est au runtime.
+        max_buffer_size = 8 * 1024 * 1024  # 8MB max - ajustable selon votre ESP32
+        
+        # Avertissement pour les grosses images mais pas d'erreur bloquante
+        if buffer_size > 4 * 1024 * 1024:  # > 4MB
+            _LOGGER.warning(
+                f"Image SD {path_str}: buffer très grand ({buffer_size / (1024*1024):.1f} MB). "
+                f"Assurez-vous que votre ESP32 a assez de PSRAM."
+            )
+        
         if buffer_size > max_buffer_size:
             raise cv.Invalid(
                 f"Image SD {path_str}: buffer trop grand ({buffer_size} bytes). "
