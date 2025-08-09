@@ -77,10 +77,12 @@ class Image : public display::BaseImage {
   size_t bpp_{};
   size_t stride_{};
 
-  // Nouvelles propriétés pour les images SD
-  std::string sd_path_{};
-  bool sd_runtime_{false};
-  std::vector<uint8_t> sd_buffer_;  // Buffer pour l'image chargée depuis la SD
+  std::vector<uint8_t> sd_buffer_;
+  std::string sd_path_;
+  bool sd_runtime_ = false;
+  
+  uint8_t get_data_byte_(size_t pos) const;
+  bool load_from_sd();
 
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
