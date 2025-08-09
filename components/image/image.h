@@ -65,7 +65,7 @@ class Image : public display::BaseImage {
 
   // Ajout pour lecture SD
  std::string sd_path_{};
-  bool sd_runtime_{true};
+  bool sd_runtime_{false};
   std::vector<uint8_t> sd_buffer_;  // stockage image chargée
 
 #ifdef USE_LVGL
