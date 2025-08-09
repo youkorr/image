@@ -2,6 +2,7 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
+#include "../sd_mmc_card/sd_mmc_card.h"
 
 namespace esphome {
 namespace image {
