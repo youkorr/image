@@ -733,39 +733,75 @@ async def write_image(config, all_frames=False):
         _LOGGER.info(f"Traitement d'une image SD: {path_str}")
         sd_path = normalize_to_sd_path(path_str)
         
-        # Gestion du resize - obligatoire pour les images SD
-        if CONF_RESIZE in config:
-            width, height = config[CONF_RESIZE]
-            _LOGGER.info(f"Redimensionnement configuré pour {path_str}: {width}x{height}")
-        else:
-            # Si pas de resize spécifié, utiliser une taille minimale
-            width, height = 1, 1  # Taille minimale pour le placeholder
-            _LOGGER.info(f"Utilisation d'une taille minimale {width}x{height} pour l'image SD {path_str}")
-
+        # Gestion du resize - OBLIGATOIRE pour les images SD
+        if CONF_RESIZE not in config:
+            raise cv.Invalid(
+                f"Le paramètre 'resize' est obligatoire pour les images de carte SD. "
+                f"Spécifiez 'resize: WIDTHxHEIGHT' pour l'image {path_str}"
+            )
+        
+        width, height = config[CONF_RESIZE]
         type = config[CONF_TYPE]
         transparency = config[CONF_TRANSPARENCY]
+        invert_alpha = config[CONF_INVERT_ALPHA]
         
-        # Crée un tableau minimal pour la compilation
-        minimal_data = [0]  # Un seul byte pour le placeholder
+        _LOGGER.info(f"Image SD configurée: {path_str} -> {width}x{height}")
         
-        rhs = [HexInt(x) for x in minimal_data]
+        def calculate_buffer_size(w, h, img_type, trans):
+            """Calcule la taille du buffer pour une configuration donnée"""
+            if img_type == "RGB565":
+                bpp = 3 if trans == "alpha_channel" else 2
+            elif img_type == "RGB":
+                bpp = 4 if trans == "alpha_channel" else 3
+            elif img_type == "GRAYSCALE":
+                bpp = 2 if trans == "alpha_channel" else 1
+            elif img_type == "BINARY":
+                return ((w + 7) // 8) * h
+            else:
+                bpp = 3  # Par défaut RGB
+            return w * h * bpp
+        
+        # Calcul de la taille du buffer
+        buffer_size = calculate_buffer_size(width, height, type, transparency)
+        
+        # Validation de la taille - évite les buffers trop grands
+        max_buffer_size = 2 * 1024 * 1024  # 2MB max
+        if buffer_size > max_buffer_size:
+            raise cv.Invalid(
+                f"Image SD {path_str}: buffer trop grand ({buffer_size} bytes). "
+                f"Maximum autorisé: {max_buffer_size} bytes. "
+                f"Réduisez la taille avec resize: ou changez le format."
+            )
+        
+        # Crée un buffer de la bonne taille rempli de zéros
+        # Ceci est un placeholder - l'image réelle sera chargée au runtime
+        placeholder_data = [0] * buffer_size
+        
+        # Configuration de l'encoder pour les métadonnées
+        encoder = IMAGE_TYPE[type](width, height, transparency, 
+                                 Image.Dither.NONE, invert_alpha)
+        
+        if byte_order := config.get(CONF_BYTE_ORDER):
+            if hasattr(encoder, "set_big_endian"):
+                encoder.set_big_endian(byte_order == "BIG_ENDIAN")
+                _LOGGER.info(f"Configuration byte_order pour {path_str}: {byte_order}")
+
+        rhs = [HexInt(x) for x in placeholder_data]
         prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
         image_type = get_image_type_enum(type)
         trans_value = get_transparency_enum(transparency)
-
-        if byte_order := config.get(CONF_BYTE_ORDER):
-            _LOGGER.info(f"Configuration byte_order pour {path_str}: {byte_order}")
 
         _LOGGER.info(f"""Configuration de l'image SD:
             - Fichier: {sd_path}
             - Dimensions: {width}x{height}
             - Type: {type}
             - Transparence: {transparency}
+            - Buffer size: {buffer_size} bytes ({buffer_size / 1024:.1f} KB)
         """)
 
         return prog_arr, width, height, image_type, trans_value, 1, True, sd_path
 
-    # Garde le code existant pour les images non-SD
+    # Code existant pour les images normales (non-SD)
     path = Path(path_str)
     if not path.is_file():
         raise core.EsphomeError(f"Impossible de charger le fichier image {path}")
@@ -849,13 +885,11 @@ async def to_code(config):
             await to_code(entry)
     else:
         prog_arr, width, height, image_type, trans_value, _, sd_runtime, sd_path = await write_image(config)
+        
         var = cg.new_Pvariable(config[CONF_ID], prog_arr, width, height, image_type, trans_value)
 
-        # Si image configurée pour lecture runtime depuis la SD -> transmettre le chemin au C++
+        # Si image configurée pour lecture runtime depuis la SD
         if sd_runtime:
-            # Ces setters doivent être implémentés dans ta classe C++ Image:
-            #   void set_sd_path(const std::string &path);
-            #   void set_sd_runtime(bool enabled);
             cg.add(var.set_sd_path(sd_path))
             cg.add(var.set_sd_runtime(True))
             _LOGGER.info(f"Image {config[CONF_ID]} configured for SD card runtime loading: {sd_path}")
