@@ -1,14 +1,18 @@
 #pragma once
+
 #include "esphome/core/color.h"
 #include "esphome/components/display/display.h"
-#include "../sd_mmc_card/sd_mmc_card.h"
+#include "esphome/core/helpers.h"
 #include <vector>
 #include <string>
 #include <algorithm>
 
+// Utilise le composant sd_mmc_card existant
+#include "../sd_mmc_card/sd_mmc_card.h"
+
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_proxy.h"
-#endif  // USE_LVGL
+#endif
 
 namespace esphome {
 namespace image {
@@ -38,8 +42,6 @@ class Image : public display::BaseImage {
   ImageType get_type() const;
   int get_bpp() const { return this->bpp_; }
   
-  /// Return the stride of the image in bytes, that is, the distance in bytes
-  /// between two consecutive rows of pixels.
   size_t get_width_stride() const { return (this->width_ * this->get_bpp() + 7u) / 8u; }
   
   void draw(int x, int y, display::Display *display, Color color_on, Color color_off) override;
@@ -49,6 +51,7 @@ class Image : public display::BaseImage {
   // Méthodes pour les images SD
   void set_sd_path(const std::string &path) { this->sd_path_ = path; }
   void set_sd_runtime(bool enabled) { this->sd_runtime_ = enabled; }
+  void set_sd_card_component(sd_mmc_card::SdMmcCardComponent *sd_card) { this->sd_card_component_ = sd_card; }
   bool load_from_sd();
 
 #ifdef USE_LVGL
@@ -61,26 +64,28 @@ class Image : public display::BaseImage {
   Color get_rgb565_pixel_(int x, int y) const;
   Color get_grayscale_pixel_(int x, int y) const;
   
-  // Nouvelle méthode pour lire les données (SD buffer ou placeholder)
   uint8_t get_data_byte_(size_t pos) const;
   
-  // Méthodes utilitaires pour les images SD
-  bool decode_jpeg_from_sd();
+  // Méthodes privées pour le décodage d'images
+  bool decode_image_from_sd();
+  bool decode_jpeg_data(const std::vector<uint8_t> &jpeg_data);
+  bool decode_png_data(const std::vector<uint8_t> &png_data);
+  bool read_sd_file(const std::string &path, std::vector<uint8_t> &data);
   size_t get_expected_buffer_size() const;
-
-  // Propriétés existantes
+  
+  // Propriétés
   int width_;
   int height_;
   ImageType type_;
-  const uint8_t *data_start_;  // Placeholder de compilation
+  const uint8_t *data_start_;
   Transparency transparency_;
   size_t bpp_{};
-  size_t stride_{};
-
-  // Nouvelles propriétés pour les images SD
+  
+  // Support SD
   std::string sd_path_{};
   bool sd_runtime_{false};
-  std::vector<uint8_t> sd_buffer_;  // Buffer pour l'image chargée depuis la SD
+  std::vector<uint8_t> sd_buffer_;
+  sd_mmc_card::SdMmcCardComponent *sd_card_component_{nullptr};
 
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
