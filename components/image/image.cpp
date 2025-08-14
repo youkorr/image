@@ -10,8 +10,8 @@ namespace image {
 
 static const char *const TAG = "image";
 
-// Lecteur de fichier SD global
-Image::SDFileReader Image::global_sd_reader_ = nullptr;
+// Lecteur de fichier SD global - Fixed: use the correct type
+SDFileReader Image::global_sd_reader_ = nullptr;
 
 void Image::draw(int x, int y, display::Display *display, Color color_on, Color color_off) {
   // Charge l'image depuis la SD si nécessaire
