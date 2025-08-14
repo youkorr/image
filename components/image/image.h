@@ -1,11 +1,18 @@
+// image.h - Version simplifiée avec includes complets
 #pragma once
 
 #include "esphome/core/color.h"
 #include "esphome/components/display/display.h"
 #include "esphome/core/helpers.h"
-#include <vector>
 #include <string>
+#include <vector>
 #include <algorithm>
+#include <functional>
+
+#ifdef USE_ESP32
+#include "driver/sdmmc_host.h"
+#include "driver/sdmmc_defs.h"
+#endif
 
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_proxy.h"
@@ -34,6 +41,9 @@ enum Transparency {
   TRANSPARENCY_ALPHA_CHANNEL = 2,
 };
 
+// Type pour la fonction de lecture de fichier SD
+using SDFileReader = std::function<bool(const std::string&, std::vector<uint8_t>&)>;
+
 class Image : public display::BaseImage {
  public:
   Image(const uint8_t *data_start, int width, int height, ImageType type, Transparency transparency);
@@ -52,11 +62,14 @@ class Image : public display::BaseImage {
   
   bool has_transparency() const { return this->transparency_ != TRANSPARENCY_OPAQUE; }
   
-  // Méthodes pour les images SD
+  // Méthodes pour les images SD - Version simplifiée
   void set_sd_path(const std::string &path) { this->sd_path_ = path; }
   void set_sd_runtime(bool enabled) { this->sd_runtime_ = enabled; }
-  void set_sd_card_component(esphome::sd_mmc_card::SdMmcCardComponent *sd_card) { this->sd_card_component_ = sd_card; }
+  void set_sd_file_reader(SDFileReader reader) { this->sd_file_reader_ = reader; }
   bool load_from_sd();
+  
+  // Fonction statique pour enregistrer un lecteur de fichier global
+  static void set_global_sd_reader(SDFileReader reader) { global_sd_reader_ = reader; }
 
 #ifdef USE_LVGL
   lv_img_dsc_t *get_lv_img_dsc();
@@ -89,7 +102,10 @@ class Image : public display::BaseImage {
   std::string sd_path_{};
   bool sd_runtime_{false};
   std::vector<uint8_t> sd_buffer_;
-  esphome::sd_mmc_card::SdMmcCardComponent *sd_card_component_{nullptr};
+  SDFileReader sd_file_reader_;
+  
+  // Lecteur de fichier global (partagé par toutes les images)
+  static SDFileReader global_sd_reader_;
 
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
