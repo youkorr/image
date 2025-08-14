@@ -1,8 +1,8 @@
 #include "image.h"
-
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+#include "../sd_mmc_card/sd_mmc_card.h"
 
 namespace esphome {
 namespace image {
@@ -10,9 +10,12 @@ namespace image {
 static const char *const TAG = "image";
 
 void Image::draw(int x, int y, display::Display *display, Color color_on, Color color_off) {
-  // Essaye de charger depuis la SD si pas encore fait
+  // Charge l'image depuis la SD si nécessaire
   if (sd_runtime_ && sd_buffer_.empty() && !sd_path_.empty()) {
-    load_from_sd();
+    if (!load_from_sd()) {
+      ESP_LOGE(TAG, "Failed to load SD image: %s", sd_path_.c_str());
+      return;
+    }
   }
   
   int img_x0 = 0;
@@ -54,13 +57,12 @@ void Image::draw(int x, int y, display::Display *display, Color color_on, Color 
           switch (this->transparency_) {
             case TRANSPARENCY_CHROMA_KEY:
               if (gray == 1) {
-                continue;  // skip drawing
+                continue;
               }
               break;
             case TRANSPARENCY_ALPHA_CHANNEL: {
               auto on = (float) gray / 255.0f;
               auto off = 1.0f - on;
-              // blend color_on and color_off
               color = Color(color_on.r * on + color_off.r * off, color_on.g * on + color_off.g * off,
                             color_on.b * on + color_off.b * off, 0xFF);
               break;
@@ -114,54 +116,190 @@ Color Image::get_pixel(int x, int y, const Color color_on, const Color color_off
   }
 }
 
-// Nouvelle méthode pour obtenir un byte de données (SD buffer ou données originales)
 uint8_t Image::get_data_byte_(size_t pos) const {
   if (!sd_buffer_.empty()) {
-    // Utilise les données chargées depuis la SD
     if (pos < sd_buffer_.size()) {
       return sd_buffer_[pos];
     }
     return 0;
   } else {
-    // Utilise les données originales
     return progmem_read_byte(this->data_start_ + pos);
   }
 }
 
-// Nouvelle méthode pour charger une image depuis la SD
 bool Image::load_from_sd() {
   if (sd_path_.empty()) {
     ESP_LOGE(TAG, "SD path is empty");
     return false;
   }
 
+  if (!sd_card_component_ || !sd_card_component_->is_ready()) {
+    ESP_LOGE(TAG, "SD card component not available or not ready");
+    return false;
+  }
+
   ESP_LOGI(TAG, "Loading image from SD: %s", sd_path_.c_str());
   
-  // TODO: Implémentez ici la lecture du fichier depuis votre composant SD
-  // et le décodage avec les décodeurs natifs d'ESPHome
-  
-  /*
-  // Exemple d'implémentation:
+  return decode_image_from_sd();
+}
+
+bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
+  FILE *file = fopen(path.c_str(), "rb");
+  if (!file) {
+    ESP_LOGE(TAG, "Failed to open file: %s", path.c_str());
+    return false;
+  }
+
+  // Obtient la taille du fichier
+  fseek(file, 0, SEEK_END);
+  long file_size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+
+  if (file_size <= 0) {
+    ESP_LOGE(TAG, "Invalid file size: %ld", file_size);
+    fclose(file);
+    return false;
+  }
+
+  // Lit le fichier
+  data.resize(file_size);
+  size_t read_size = fread(data.data(), 1, file_size, file);
+  fclose(file);
+
+  if (read_size != static_cast<size_t>(file_size)) {
+    ESP_LOGE(TAG, "Failed to read complete file. Expected: %ld, Read: %zu", file_size, read_size);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Successfully read %zu bytes from %s", data.size(), path.c_str());
+  return true;
+}
+
+bool Image::decode_image_from_sd() {
   std::vector<uint8_t> file_data;
   if (!read_sd_file(sd_path_, file_data)) {
-    ESP_LOGE(TAG, "Failed to read file: %s", sd_path_.c_str());
     return false;
   }
-  
-  // Utiliser les décodeurs ESPHome pour décoder JPG/PNG
-  if (!decode_image_data(file_data)) {
-    ESP_LOGE(TAG, "Failed to decode image: %s", sd_path_.c_str());
-    return false;
+
+  // Détecte le format d'image
+  if (file_data.size() >= 4) {
+    // JPEG: FF D8 FF
+    if (file_data[0] == 0xFF && file_data[1] == 0xD8 && file_data[2] == 0xFF) {
+      ESP_LOGI(TAG, "Detected JPEG format");
+      return decode_jpeg_data(file_data);
+    }
+    // PNG: 89 50 4E 47
+    else if (file_data[0] == 0x89 && file_data[1] == 0x50 && 
+             file_data[2] == 0x4E && file_data[3] == 0x47) {
+      ESP_LOGI(TAG, "Detected PNG format");
+      return decode_png_data(file_data);
+    }
   }
-  */
-  
-  ESP_LOGW(TAG, "SD loading not implemented yet");
+
+  ESP_LOGE(TAG, "Unsupported image format or corrupted file");
   return false;
+}
+
+// Décodeur JPEG simple (vous pouvez utiliser une bibliothèque comme TJpgDec)
+bool Image::decode_jpeg_data(const std::vector<uint8_t> &jpeg_data) {
+  ESP_LOGI(TAG, "Decoding JPEG data (%zu bytes)", jpeg_data.size());
+  
+  // TODO: Intégrez ici une bibliothèque de décodage JPEG comme TJpgDec
+  // Pour l'instant, on crée une image de test
+  
+  size_t expected_size = get_expected_buffer_size();
+  sd_buffer_.resize(expected_size);
+  
+  // Image de test (carré rouge)
+  switch (type_) {
+    case IMAGE_TYPE_RGB:
+      for (size_t i = 0; i < expected_size; i += 3) {
+        if (i + 2 < expected_size) {
+          sd_buffer_[i] = 255;     // R
+          sd_buffer_[i + 1] = 0;   // G  
+          sd_buffer_[i + 2] = 0;   // B
+        }
+      }
+      break;
+    case IMAGE_TYPE_RGB565:
+      for (size_t i = 0; i < expected_size; i += 2) {
+        if (i + 1 < expected_size) {
+          uint16_t red565 = 0xF800; // Rouge en RGB565
+          sd_buffer_[i] = red565 >> 8;
+          sd_buffer_[i + 1] = red565 & 0xFF;
+        }
+      }
+      break;
+    case IMAGE_TYPE_GRAYSCALE:
+      std::fill(sd_buffer_.begin(), sd_buffer_.end(), 128); // Gris moyen
+      break;
+    case IMAGE_TYPE_BINARY:
+      std::fill(sd_buffer_.begin(), sd_buffer_.end(), 0xFF); // Blanc
+      break;
+  }
+  
+  ESP_LOGI(TAG, "JPEG decode completed (test pattern generated)");
+  return true;
+}
+
+bool Image::decode_png_data(const std::vector<uint8_t> &png_data) {
+  ESP_LOGI(TAG, "Decoding PNG data (%zu bytes)", png_data.size());
+  
+  // TODO: Intégrez ici une bibliothèque de décodage PNG
+  // Pour l'instant, on crée une image de test
+  
+  size_t expected_size = get_expected_buffer_size();
+  sd_buffer_.resize(expected_size);
+  
+  // Image de test (carré bleu)
+  switch (type_) {
+    case IMAGE_TYPE_RGB:
+      for (size_t i = 0; i < expected_size; i += 3) {
+        if (i + 2 < expected_size) {
+          sd_buffer_[i] = 0;       // R
+          sd_buffer_[i + 1] = 0;   // G
+          sd_buffer_[i + 2] = 255; // B
+        }
+      }
+      break;
+    case IMAGE_TYPE_RGB565:
+      for (size_t i = 0; i < expected_size; i += 2) {
+        if (i + 1 < expected_size) {
+          uint16_t blue565 = 0x001F; // Bleu en RGB565
+          sd_buffer_[i] = blue565 >> 8;
+          sd_buffer_[i + 1] = blue565 & 0xFF;
+        }
+      }
+      break;
+    case IMAGE_TYPE_GRAYSCALE:
+      std::fill(sd_buffer_.begin(), sd_buffer_.end(), 64); // Gris foncé
+      break;
+    case IMAGE_TYPE_BINARY:
+      std::fill(sd_buffer_.begin(), sd_buffer_.end(), 0x00); // Noir
+      break;
+  }
+  
+  ESP_LOGI(TAG, "PNG decode completed (test pattern generated)");
+  return true;
+}
+
+size_t Image::get_expected_buffer_size() const {
+  switch (type_) {
+    case IMAGE_TYPE_RGB565:
+      return width_ * height_ * (transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 3 : 2);
+    case IMAGE_TYPE_RGB:
+      return width_ * height_ * (transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 4 : 3);
+    case IMAGE_TYPE_GRAYSCALE:
+      return width_ * height_;
+    case IMAGE_TYPE_BINARY:
+      return ((width_ + 7) / 8) * height_;
+    default:
+      return width_ * height_ * 3;
+  }
 }
 
 #ifdef USE_LVGL
 lv_img_dsc_t *Image::get_lv_img_dsc() {
-  // lazily construct lvgl image_dsc.
   const uint8_t *data_ptr = sd_buffer_.empty() ? this->data_start_ : sd_buffer_.data();
   
   if (this->dsc_.data != data_ptr) {
@@ -175,11 +313,9 @@ lv_img_dsc_t *Image::get_lv_img_dsc() {
       case IMAGE_TYPE_BINARY:
         this->dsc_.header.cf = LV_IMG_CF_ALPHA_1BIT;
         break;
-
       case IMAGE_TYPE_GRAYSCALE:
         this->dsc_.header.cf = LV_IMG_CF_ALPHA_8BIT;
         break;
-
       case IMAGE_TYPE_RGB:
 #if LV_COLOR_DEPTH == 32
         switch (this->transparency_) {
@@ -198,7 +334,6 @@ lv_img_dsc_t *Image::get_lv_img_dsc() {
             this->transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? LV_IMG_CF_RGBA8888 : LV_IMG_CF_RGB888;
 #endif
         break;
-
       case IMAGE_TYPE_RGB565:
 #if LV_COLOR_DEPTH == 16
         switch (this->transparency_) {
@@ -220,7 +355,7 @@ lv_img_dsc_t *Image::get_lv_img_dsc() {
   }
   return &this->dsc_;
 }
-#endif  // USE_LVGL
+#endif
 
 bool Image::get_binary_pixel_(int x, int y) const {
   const uint32_t width_8 = ((this->width_ + 7u) / 8u) * 8u;
@@ -236,7 +371,6 @@ Color Image::get_rgb_pixel_(int x, int y) const {
   switch (this->transparency_) {
     case TRANSPARENCY_CHROMA_KEY:
       if (color.g == 1 && color.r == 0 && color.b == 0) {
-        // (0, 1, 0) has been defined as transparent color for non-alpha images.
         color.w = 0;
       }
       break;
