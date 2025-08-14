@@ -30,7 +30,7 @@ from esphome.core import CORE, HexInt
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "image"
-DEPENDENCIES = ["display"]
+DEPENDENCIES = ["display", "sd_mmc_card"]
 
 image_ns = cg.esphome_ns.namespace("image")
 
