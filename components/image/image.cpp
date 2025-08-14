@@ -2,12 +2,16 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
-#include "../sd_mmc_card/sd_mmc_card.h"
+#include <sys/stat.h>
+#include <stdio.h>
 
 namespace esphome {
 namespace image {
 
 static const char *const TAG = "image";
+
+// Lecteur de fichier SD global
+Image::SDFileReader Image::global_sd_reader_ = nullptr;
 
 void Image::draw(int x, int y, display::Display *display, Color color_on, Color color_off) {
   // Charge l'image depuis la SD si nécessaire
@@ -133,46 +137,21 @@ bool Image::load_from_sd() {
     return false;
   }
 
-  if (!sd_card_component_ || !sd_card_component_->is_ready()) {
-    ESP_LOGE(TAG, "SD card component not available or not ready");
-    return false;
-  }
-
   ESP_LOGI(TAG, "Loading image from SD: %s", sd_path_.c_str());
   
   return decode_image_from_sd();
 }
 
 bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
-  FILE *file = fopen(path.c_str(), "rb");
-  if (!file) {
-    ESP_LOGE(TAG, "Failed to open file: %s", path.c_str());
+  // Utilise le lecteur spécifique à l'image ou le lecteur global
+  SDFileReader reader = sd_file_reader_ ? sd_file_reader_ : global_sd_reader_;
+  
+  if (!reader) {
+    ESP_LOGE(TAG, "No SD file reader available");
     return false;
   }
-
-  // Obtient la taille du fichier
-  fseek(file, 0, SEEK_END);
-  long file_size = ftell(file);
-  fseek(file, 0, SEEK_SET);
-
-  if (file_size <= 0) {
-    ESP_LOGE(TAG, "Invalid file size: %ld", file_size);
-    fclose(file);
-    return false;
-  }
-
-  // Lit le fichier
-  data.resize(file_size);
-  size_t read_size = fread(data.data(), 1, file_size, file);
-  fclose(file);
-
-  if (read_size != static_cast<size_t>(file_size)) {
-    ESP_LOGE(TAG, "Failed to read complete file. Expected: %ld, Read: %zu", file_size, read_size);
-    return false;
-  }
-
-  ESP_LOGI(TAG, "Successfully read %zu bytes from %s", data.size(), path.c_str());
-  return true;
+  
+  return reader(path, data);
 }
 
 bool Image::decode_image_from_sd() {
