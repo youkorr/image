@@ -7,12 +7,16 @@
 #include <string>
 #include <algorithm>
 
-// Utilise le composant sd_mmc_card existant
-#include "../sd_mmc_card/sd_mmc_card.h"
-
 #ifdef USE_LVGL
 #include "esphome/components/lvgl/lvgl_proxy.h"
 #endif
+
+// Déclaration forward pour éviter l'inclusion circulaire
+namespace esphome {
+namespace sd_mmc_card {
+class SdMmcCardComponent;
+}
+}
 
 namespace esphome {
 namespace image {
@@ -51,7 +55,7 @@ class Image : public display::BaseImage {
   // Méthodes pour les images SD
   void set_sd_path(const std::string &path) { this->sd_path_ = path; }
   void set_sd_runtime(bool enabled) { this->sd_runtime_ = enabled; }
-  void set_sd_card_component(sd_mmc_card::SdMmcCardComponent *sd_card) { this->sd_card_component_ = sd_card; }
+  void set_sd_card_component(esphome::sd_mmc_card::SdMmcCardComponent *sd_card) { this->sd_card_component_ = sd_card; }
   bool load_from_sd();
 
 #ifdef USE_LVGL
@@ -85,7 +89,7 @@ class Image : public display::BaseImage {
   std::string sd_path_{};
   bool sd_runtime_{false};
   std::vector<uint8_t> sd_buffer_;
-  sd_mmc_card::SdMmcCardComponent *sd_card_component_{nullptr};
+  esphome::sd_mmc_card::SdMmcCardComponent *sd_card_component_{nullptr};
 
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
