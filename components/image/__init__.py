@@ -916,21 +916,8 @@ async def to_code(config):
             cg.add(var.set_sd_runtime(True))
             _LOGGER.info(f"Image {config[CONF_ID]} configured for SD card runtime loading: {sd_path}")
             
-            # Ajouter la dépendance au composant SD
-            if hasattr(config, 'get') and 'sd_mmc_card' in CORE.config:
-                # Trouver le composant SD MMC
-                for comp_id, comp_config in CORE.config.get('sd_mmc_card', {}).items():
-                    if isinstance(comp_config, dict) and 'id' in comp_config:
-                        sd_component_id = comp_config['id']
-                        _LOGGER.info(f"Found SD MMC component: {sd_component_id}")
-                        break
-                else:
-                    _LOGGER.warning("No sd_mmc_card component found in config")
-        
-        # Ajouter les includes nécessaires pour les images SD
-        if sd_runtime:
+            # Ajouter seulement le define nécessaire
             cg.add_define("USE_SD_CARD_IMAGES")
-            cg.add_library("ESP32", "driver", None)  # Pour SDMMC
 
 
 
