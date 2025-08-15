@@ -332,10 +332,13 @@ def local_path(value):
 
 
 def sd_card_path(value):
-    """Handle SD card path - return the path as-is for SD card sources"""
+    """Retourne le chemin complet sur la racine de la SD card"""
     value = value[CONF_PATH] if isinstance(value, dict) else value
-    _LOGGER.info(f"SD card image path configured: {value}")
-    return str(value)
+    # Supprime un éventuel slash en début pour éviter les doublons
+    value = value.lstrip("/\\")
+    full_path = "/" + value  # chemin à partir de la racine de la SD
+    _LOGGER.info(f"Chemin SD résolu: {full_path}")
+    return full_path
 
 
 def is_sd_card_path(path_str: str) -> bool:
