@@ -340,14 +340,14 @@ def sd_card_path(value):
     _LOGGER.info(f"Chemin SD résolu: {full_path}")
     return full_path
 
-
+SD_MOUNT_POINT = "/sd"
 def is_sd_card_path(path_str: str) -> bool:
-    """Vérifie si un chemin est sur la carte SD (racine /)"""
+    """Vérifie si un chemin est sur la carte SD"""
     if not isinstance(path_str, str):
         return False
     path_str = path_str.strip()
-    # Tout chemin commençant par / est considéré comme SD card
-    return path_str.startswith("/")
+    # On ne considère que les chemins sous le point de montage de la SD
+    return path_str.startswith(SD_MOUNT_POINT + "/") or path_str == SD_MOUNT_POINT
 
 
 
