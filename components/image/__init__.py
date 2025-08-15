@@ -342,20 +342,13 @@ def sd_card_path(value):
 
 
 def is_sd_card_path(path_str: str) -> bool:
-    """Check if a path is an SD card path - VERSION CORRIGÉE"""
+    """Vérifie si un chemin est sur la carte SD (racine /)"""
     if not isinstance(path_str, str):
         return False
     path_str = path_str.strip()
-    return (
-        path_str.startswith("/sd_card/") or       # Format ESPHome standard: /sd_card/
-        path_str.startswith("sd_card/") or        # Format relatif : sd_card/
-        path_str.startswith("sd_card//") or       # Double slash
-        path_str.startswith("/sdcard/") or        # Format système runtime
-        path_str.startswith("sdcard/") or         # Format relatif système
-        path_str.startswith("//") or
-        path_str.startswith("/sd/") or
-        path_str.startswith("sd/")
-    )
+    # Tout chemin commençant par / est considéré comme SD card
+    return path_str.startswith("/")
+
 
 
 def download_file(url, path):
