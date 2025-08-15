@@ -322,6 +322,7 @@ SOURCE_WEB = "web"
 SOURCE_MDI = "mdi"
 SOURCE_MDIL = "mdil"
 SOURCE_MEMORY = "memory"
+SOURCE_SD_CARD = "sd_card"
 
 MDI_SOURCES = {
     SOURCE_MDI: "https://raw.githubusercontent.com/Templarian/MaterialDesign/master/svg/",
@@ -346,6 +347,25 @@ def compute_local_image_path(value) -> Path:
 def local_path(value):
     value = value[CONF_PATH] if isinstance(value, dict) else value
     return str(CORE.relative_config_path(value))
+
+def sd_card_path(value):
+    """Handle SD card path - return the path as-is for SD card sources"""
+    value = value[CONF_PATH] if isinstance(value, dict) else value
+    _LOGGER.info(f"SD card image path configured: {value}")
+    return str(value)
+
+
+def is_sd_card_path(path_str: str) -> bool:
+    """Check if a path is an SD card path"""
+    if not isinstance(path_str, str):
+        return False
+    path_str = path_str.strip()
+    return (
+        path_str.startswith("sd_card/") or 
+        path_str.startswith("//") or
+        path_str.startswith("/sdcard/")
+        path_str.startswith("/sd/")
+    )
 
 
 def download_file(url, path):
@@ -428,6 +448,12 @@ def mdi_schema(source):
         validate_mdi,
     )
 
+SD_CARD_SCHEMA = cv.All(
+    {
+        cv.Required(CONF_PATH): cv.string,
+    },
+    sd_card_path,
+)
 
 WEB_SCHEMA = cv.All(
     {
@@ -441,6 +467,7 @@ TYPED_FILE_SCHEMA = cv.typed_schema(
     {
         SOURCE_LOCAL: LOCAL_SCHEMA,
         SOURCE_WEB: WEB_SCHEMA,
+        SOURCE_SD_CARD: SD_CARD_SCHEMA,
     }
     | {source: mdi_schema(source) for source in MDI_SOURCES},
     key=CONF_SOURCE,
