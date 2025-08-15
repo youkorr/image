@@ -155,6 +155,34 @@ bool Image::load_from_sd() {
   
   return decode_image_from_sd();
 }
+bool Image::decode_image_from_sd() {
+    std::vector<uint8_t> file_data;
+
+    // Lire le fichier depuis la SD
+    if (!read_sd_file(sd_path_, file_data)) {
+        ESP_LOGE(TAG, "Failed to read SD file: %s", sd_path_.c_str());
+        return false;
+    }
+
+    // Détection simple du type d'image
+    if (file_data.size() >= 2 && file_data[0] == 0xFF && file_data[1] == 0xD8) {
+        // JPEG
+        ESP_LOGI(TAG, "JPEG image detected");
+        return decode_jpeg_data(file_data);
+    }
+    else if (file_data.size() >= 8 &&
+             file_data[0] == 0x89 && file_data[1] == 0x50 &&
+             file_data[2] == 0x4E && file_data[3] == 0x47 &&
+             file_data[4] == 0x0D && file_data[5] == 0x0A &&
+             file_data[6] == 0x1A && file_data[7] == 0x0A) {
+        // PNG
+        ESP_LOGI(TAG, "PNG image detected");
+        return decode_png_data(file_data);
+    }
+
+    ESP_LOGE(TAG, "Unknown image format: %s", sd_path_.c_str());
+    return false;
+}
 
 bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
   ESP_LOGI(TAG, "Attempting to read SD file: %s", path.c_str());
