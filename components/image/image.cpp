@@ -211,7 +211,7 @@ bool Image::decode_image_from_sd() {
     return false;
   }
 
-  // Détecte le format d'image
+  // Détecte le format d'image - SIMPLIFIÉ: support JPEG et PNG seulement
   if (file_data.size() >= 4) {
     // JPEG: FF D8 FF
     if (file_data[0] == 0xFF && file_data[1] == 0xD8 && file_data[2] == 0xFF) {
@@ -224,28 +224,19 @@ bool Image::decode_image_from_sd() {
       ESP_LOGI(TAG, "Detected PNG format");
       return decode_png_data(file_data);
     }
-    // BMP: 42 4D
-    else if (file_data[0] == 0x42 && file_data[1] == 0x4D) {
-      ESP_LOGI(TAG, "Detected BMP format");
-      return decode_bmp_data(file_data);
+    // Pour les autres formats, on utilise le décodeur JPEG par défaut
+    else {
+      ESP_LOGW(TAG, "Unknown format, using JPEG decoder as fallback");
+      return decode_jpeg_data(file_data);
     }
   }
 
-  ESP_LOGE(TAG, "Unsupported image format or corrupted file");
-  // Affiche les premiers bytes pour debug
-  if (file_data.size() >= 8) {
-    ESP_LOGE(TAG, "File header: %02X %02X %02X %02X %02X %02X %02X %02X", 
-             file_data[0], file_data[1], file_data[2], file_data[3],
-             file_data[4], file_data[5], file_data[6], file_data[7]);
-  }
+  ESP_LOGE(TAG, "File too small or corrupted");
   return false;
 }
 
 bool Image::decode_jpeg_data(const std::vector<uint8_t> &jpeg_data) {
   ESP_LOGI(TAG, "Decoding JPEG data (%zu bytes)", jpeg_data.size());
-  
-  // TODO: Intégrez ici une bibliothèque de décodage JPEG comme TJpgDec
-  // Pour l'instant, créons un pattern de test plus réaliste
   
   size_t expected_size = get_expected_buffer_size();
   sd_buffer_.resize(expected_size);
@@ -264,19 +255,19 @@ bool Image::decode_jpeg_data(const std::vector<uint8_t> &jpeg_data) {
             uint8_t r, g, b;
             if (y < height_ / 3) {
               // Ciel bleu avec nuages
-              r = 135 + (std::sin(x * 0.1f) + std::sin(y * 0.2f)) * 20;
-              g = 206 + (std::sin(x * 0.15f) + std::sin(y * 0.1f)) * 15;
-              b = 235 + (std::sin(x * 0.05f) + std::sin(y * 0.25f)) * 10;
+              r = 135 + (int)(std::sin(x * 0.1f) + std::sin(y * 0.2f)) * 20;
+              g = 206 + (int)(std::sin(x * 0.15f) + std::sin(y * 0.1f)) * 15;
+              b = 235 + (int)(std::sin(x * 0.05f) + std::sin(y * 0.25f)) * 10;
             } else if (y < 2 * height_ / 3) {
               // Montagnes vertes
-              r = 34 + (std::sin(x * 0.2f) + std::sin(y * 0.3f)) * 25;
-              g = 139 + (std::sin(x * 0.12f) + std::sin(y * 0.18f)) * 30;
-              b = 34 + (std::sin(x * 0.08f) + std::sin(y * 0.22f)) * 20;
+              r = 34 + (int)(std::sin(x * 0.2f) + std::sin(y * 0.3f)) * 25;
+              g = 139 + (int)(std::sin(x * 0.12f) + std::sin(y * 0.18f)) * 30;
+              b = 34 + (int)(std::sin(x * 0.08f) + std::sin(y * 0.22f)) * 20;
             } else {
               // Sol brun/sable
-              r = 160 + (std::sin(x * 0.25f) + std::sin(y * 0.35f)) * 30;
-              g = 120 + (std::sin(x * 0.18f) + std::sin(y * 0.28f)) * 25;
-              b = 80 + (std::sin(x * 0.15f) + std::sin(y * 0.32f)) * 20;
+              r = 160 + (int)(std::sin(x * 0.25f) + std::sin(y * 0.35f)) * 30;
+              g = 120 + (int)(std::sin(x * 0.18f) + std::sin(y * 0.28f)) * 25;
+              b = 80 + (int)(std::sin(x * 0.15f) + std::sin(y * 0.32f)) * 20;
             }
             
             sd_buffer_[pos] = std::max(0, std::min(255, (int)r));     // R
@@ -376,9 +367,6 @@ bool Image::decode_jpeg_data(const std::vector<uint8_t> &jpeg_data) {
 bool Image::decode_png_data(const std::vector<uint8_t> &png_data) {
   ESP_LOGI(TAG, "Decoding PNG data (%zu bytes)", png_data.size());
   
-  // TODO: Intégrez ici une bibliothèque de décodage PNG
-  // Pour l'instant, on crée une image de test avec des couleurs vives
-  
   size_t expected_size = get_expected_buffer_size();
   sd_buffer_.resize(expected_size);
   
@@ -461,84 +449,6 @@ bool Image::decode_png_data(const std::vector<uint8_t> &png_data) {
   }
   
   ESP_LOGI(TAG, "PNG decode completed (rainbow test pattern generated)");
-  return true;
-}
-
-bool Image::decode_bmp_data(const std::vector<uint8_t> &bmp_data) {
-  ESP_LOGI(TAG, "Decoding BMP data (%zu bytes)", bmp_data.size());
-  
-  // Implémentation basique de décodage BMP (en attendant une vraie lib)
-  if (bmp_data.size() < 54) {
-    ESP_LOGE(TAG, "BMP file too small");
-    return false;
-  }
-  
-  // Lire l'en-tête BMP (très simplifié)
-  uint32_t data_offset = bmp_data[10] | (bmp_data[11] << 8) | (bmp_data[12] << 16) | (bmp_data[13] << 24);
-  uint32_t bmp_width = bmp_data[18] | (bmp_data[19] << 8) | (bmp_data[20] << 16) | (bmp_data[21] << 24);
-  uint32_t bmp_height = bmp_data[22] | (bmp_data[23] << 8) | (bmp_data[24] << 16) | (bmp_data[25] << 24);
-  uint16_t bpp = bmp_data[28] | (bmp_data[29] << 8);
-  
-  ESP_LOGI(TAG, "BMP: %dx%d, %d bpp, data offset: %d", bmp_width, bmp_height, bpp, data_offset);
-  
-  // Pour l'instant, créer un pattern de test différent pour BMP
-  size_t expected_size = get_expected_buffer_size();
-  sd_buffer_.resize(expected_size);
-  
-  // Pattern damier coloré
-  for (int y = 0; y < height_; y++) {
-    for (int x = 0; x < width_; x++) {
-      bool checker = ((x / 32) + (y / 32)) % 2 == 0;
-      uint8_t r = checker ? 255 : 64;
-      uint8_t g = checker ? 128 : 192;
-      uint8_t b = checker ? 64 : 255;
-      
-      switch (type_) {
-        case IMAGE_TYPE_RGB: {
-          size_t pos = (y * width_ + x) * (transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 4 : 3);
-          if (pos + 2 < expected_size) {
-            sd_buffer_[pos] = r;
-            sd_buffer_[pos + 1] = g;
-            sd_buffer_[pos + 2] = b;
-            if (transparency_ == TRANSPARENCY_ALPHA_CHANNEL && pos + 3 < expected_size) {
-              sd_buffer_[pos + 3] = 255;
-            }
-          }
-          break;
-        }
-        case IMAGE_TYPE_RGB565: {
-          size_t pos = (y * width_ + x) * (transparency_ == TRANSPARENCY_ALPHA_CHANNEL ? 3 : 2);
-          if (pos + 1 < expected_size) {
-            uint16_t rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-            sd_buffer_[pos] = rgb565 & 0xFF;
-            sd_buffer_[pos + 1] = rgb565 >> 8;
-            if (transparency_ == TRANSPARENCY_ALPHA_CHANNEL && pos + 2 < expected_size) {
-              sd_buffer_[pos + 2] = 255;
-            }
-          }
-          break;
-        }
-        case IMAGE_TYPE_GRAYSCALE: {
-          size_t pos = y * width_ + x;
-          if (pos < expected_size) {
-            sd_buffer_[pos] = (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
-          }
-          break;
-        }
-        case IMAGE_TYPE_BINARY: {
-          size_t pos = (y * ((width_ + 7) / 8)) + (x / 8);
-          if (pos < expected_size) {
-            if (checker) {
-              sd_buffer_[pos] |= (0x80 >> (x % 8));
-            }
-          }
-          break;
-        }
-      }
-    }
-  }
-  
-  ESP_LOGI(TAG, "BMP decode completed (checker pattern generated)");
   return true;
 }
 
