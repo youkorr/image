@@ -339,15 +339,16 @@ def sd_card_path(value):
 
 
 def is_sd_card_path(path_str: str) -> bool:
-    """Check if a path is an SD card path"""
+    """Check if a path is an SD card path - VERSION CORRIGÉE"""
     if not isinstance(path_str, str):
         return False
     path_str = path_str.strip()
     return (
-        path_str.startswith("sd_card/") or 
-        path_str.startswith("sd_card//") or
-        path_str.startswith("/sdcard/") or
-        
+        path_str.startswith("/sd_card/") or       # Format ESPHome standard: /sd_card/
+        path_str.startswith("sd_card/") or        # Format relatif : sd_card/
+        path_str.startswith("sd_card//") or       # Double slash
+        path_str.startswith("/sdcard/") or        # Format système runtime
+        path_str.startswith("sdcard/") or         # Format relatif système
         path_str.startswith("//") or
         path_str.startswith("/sd/") or
         path_str.startswith("sd/")
@@ -357,7 +358,6 @@ def is_sd_card_path(path_str: str) -> bool:
 def download_file(url, path):
     external_files.download_content(url, path, IMAGE_DOWNLOAD_TIMEOUT)
     return str(path)
-
 
 
 def download_gh_svg(value, source):
@@ -404,7 +404,7 @@ def validate_cairosvg_installed():
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
-    # Vérification pour les chemins SD card - amélioration de la détection
+    # Vérification pour les chemins SD card - VERSION CORRIGÉE
     if is_sd_card_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
         return value  # Retourne le chemin tel quel pour SD card
@@ -671,16 +671,23 @@ def _config_schema(config):
 CONFIG_SCHEMA = _config_schema
 
 
-#
-# --- helper: normalise une entrée en un chemin utilisé par le runtime SD (/sdcard/...)
-#
+# FONCTION CORRIGÉE : normalise une entrée en un chemin utilisé par le runtime SD (/sdcard/...)
 def normalize_to_sd_path(path: str) -> str:
     """Normalize path to SD card format (/sdcard/...)"""
     p = str(path).strip()
     p = p.replace("\\", "/")
     # collapse multiple slashes
     p = re.sub(r"/+", "/", p)
-    # If contains sdcard or sd_card -> return /sdcard/...
+    
+    # Si commence par /sd_card/ -> convertir vers /sdcard/
+    if p.startswith("/sd_card/"):
+        rest = p[9:]  # Enlever "/sd_card/"
+        return "/sdcard/" + rest
+    elif p.startswith("sd_card/"):
+        rest = p[8:]  # Enlever "sd_card/"
+        return "/sdcard/" + rest
+    
+    # Si contient sdcard ou sd_card -> return /sdcard/...
     m = re.search(r"(sd[_]?card)(/.*)?", p, flags=re.I)
     if m:
         rest = m.group(2) or ""
@@ -688,11 +695,13 @@ def normalize_to_sd_path(path: str) -> str:
         if not rest.startswith("/"):
             rest = "/" + rest.lstrip("/")
         return "/sdcard" + rest
-    # If absolute path provided (starts with '/'), map into /sdcard/<rest>
+    
+    # Si chemin absolu fourni (commence par '/'), mapper dans /sdcard/<rest>
     if p.startswith("/"):
         rest = p.lstrip("/")
         return "/sdcard/" + rest
-    # Otherwise treat as filename or relative path -> put under /sdcard/
+    
+    # Sinon traiter comme nom de fichier ou chemin relatif -> mettre sous /sdcard/
     return "/sdcard/" + p.lstrip("/")
 
 
@@ -770,8 +779,6 @@ async def write_image(config, all_frames=False):
         buffer_size = calculate_buffer_size(width, height, type, transparency)
         
         # Validation de la taille - permet des images plus grandes pour ESP32-S3/P4 avec PSRAM
-        # Note: Pour les images HTTP/local, la taille peut être bien plus grande car le 
-        # redimensionnement se fait à la compilation. Pour les images SD, c'est au runtime.
         max_buffer_size = 8 * 1024 * 1024  # 8MB max - ajustable selon votre ESP32
         
         # Avertissement pour les grosses images mais pas d'erreur bloquante
