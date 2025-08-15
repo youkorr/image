@@ -192,34 +192,41 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
   
   if (!reader) {
     ESP_LOGE(TAG, "No SD file reader available - trying direct file access");
-    
-    // Tentative de lecture directe si pas de reader configuré
-    FILE* file = fopen(path.c_str(), "rb");
+
+    // 🔹 Normalisation du chemin pour éviter les problèmes de racine
+    std::vector<std::string> candidate_paths;
+
+    // Cas 1: chemin donné tel quel
+    candidate_paths.push_back(path);
+
+    // Cas 2: si commence par "/sdcard/", tester "/sdcard/sdcard/"
+    if (path.rfind("/sdcard/", 0) == 0) {
+      candidate_paths.push_back("/sdcard/sdcard/" + path.substr(8)); // 8 = strlen("/sdcard/")
+    }
+
+    // Cas 3: si chemin relatif, essayer avec "/sdcard/" devant
+    if (path[0] != '/') {
+      candidate_paths.push_back("/sdcard/" + path);
+    }
+
+    // Cas 4: racine directe si jamais la carte est montée sur "/"
+    if (path.rfind("/sdcard/", 0) == 0) {
+      candidate_paths.push_back("/" + path.substr(8));
+    }
+
+    FILE* file = nullptr;
+    for (auto &alt_path : candidate_paths) {
+      ESP_LOGW(TAG, "Trying path: %s", alt_path.c_str());
+      file = fopen(alt_path.c_str(), "rb");
+      if (file) {
+        ESP_LOGI(TAG, "Successfully opened: %s", alt_path.c_str());
+        break;
+      }
+    }
+
     if (!file) {
-      ESP_LOGE(TAG, "Cannot open file: %s (errno: %d - %s)", path.c_str(), errno, strerror(errno));
-      
-      // Essayer avec des chemins alternatifs
-      std::vector<std::string> alt_paths = {
-        std::string("/sdcard") + (path.starts_with("/") ? "" : "/") + path,
-        std::string("/sdcard/") + (path.starts_with("sdcard/") ? path.substr(7) : path),
-        path
-      };
-      
-      for (const auto& alt_path : alt_paths) {
-        if (alt_path != path) {
-          ESP_LOGW(TAG, "Trying alternative path: %s", alt_path.c_str());
-          file = fopen(alt_path.c_str(), "rb");
-          if (file) {
-            ESP_LOGI(TAG, "Successfully opened with alternative path: %s", alt_path.c_str());
-            break;
-          }
-        }
-      }
-      
-      if (!file) {
-        ESP_LOGE(TAG, "All file open attempts failed for: %s", path.c_str());
-        return false;
-      }
+      ESP_LOGE(TAG, "All file open attempts failed for: %s", path.c_str());
+      return false;
     }
     
     // Obtenir la taille du fichier
@@ -227,7 +234,7 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
     
-    if (file_size <= 0 || file_size > 50 * 1024 * 1024) { // Max 50MB pour sécurité
+    if (file_size <= 0 || file_size > 50 * 1024 * 1024) { // Max 50MB
       ESP_LOGE(TAG, "Invalid file size: %ld bytes", file_size);
       fclose(file);
       return false;
@@ -235,7 +242,7 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
     
     ESP_LOGI(TAG, "File size: %ld bytes", file_size);
     
-    // Lire le fichier par chunks pour éviter les problèmes de mémoire
+    // Lecture par chunks
     data.clear();
     data.reserve(file_size);
     
@@ -253,13 +260,12 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
           fclose(file);
           return false;
         }
-        break; // EOF
+        break;
       }
       
       data.insert(data.end(), chunk.begin(), chunk.begin() + bytes_read);
       total_read += bytes_read;
       
-      // Reset watchdog périodiquement
       if (total_read % (64 * 1024) == 0) {
         esp_task_wdt_reset();
       }
@@ -271,7 +277,7 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
       ESP_LOGW(TAG, "Read size mismatch: expected %ld, got %zu bytes", file_size, total_read);
     }
     
-    ESP_LOGI(TAG, "SD file read successfully using direct access, size: %zu bytes", data.size());
+    ESP_LOGI(TAG, "SD file read successfully, size: %zu bytes", data.size());
     return true;
   }
   
