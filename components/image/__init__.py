@@ -550,7 +550,7 @@ OPTIONS_SCHEMA = {
     cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
     cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
     cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
-    cv.Optional("root_path", default="/sdcard/"): cv.string,
+    
 }
 
 OPTIONS = [key.schema for key in OPTIONS_SCHEMA]
