@@ -224,24 +224,29 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
     if (!file) {
       ESP_LOGE(TAG, "Cannot open file: %s (errno: %d - %s)", fixed_path.c_str(), errno, strerror(errno));
       
-      // Debug : lister le contenu du répertoire parent
+      // Debug simplifié sans utiliser opendir/readdir
       std::string parent_dir = fixed_path.substr(0, fixed_path.find_last_of('/'));
       if (parent_dir.empty()) parent_dir = "/";
       
-      ESP_LOGI(TAG, "Listing directory: %s", parent_dir.c_str());
-      DIR* dir = opendir(parent_dir.c_str());
-      if (dir) {
-        struct dirent* entry;
-        int count = 0;
-        while ((entry = readdir(dir)) != nullptr && count < 10) {
-          ESP_LOGI(TAG, "  Found: %s %s", 
-                  entry->d_type == DT_DIR ? "[DIR]" : "[FILE]", 
-                  entry->d_name);
-          count++;
+      ESP_LOGI(TAG, "Attempted to access file in directory: %s", parent_dir.c_str());
+      
+      // Essayons quelques variantes du chemin
+      std::vector<std::string> alternatives = {
+        fixed_path,
+        "/" + fixed_path.substr(1), // Enlever le premier slash et le remettre
+        fixed_path.substr(1),       // Sans le premier slash
+      };
+      
+      for (const auto& alt_path : alternatives) {
+        if (alt_path != fixed_path) {
+          ESP_LOGI(TAG, "Trying alternative path: %s", alt_path.c_str());
+          struct stat st;
+          if (stat(alt_path.c_str(), &st) == 0) {
+            ESP_LOGI(TAG, "✓ Alternative path exists: %s (size: %ld)", alt_path.c_str(), st.st_size);
+          } else {
+            ESP_LOGD(TAG, "✗ Alternative path not found: %s", alt_path.c_str());
+          }
         }
-        closedir(dir);
-      } else {
-        ESP_LOGE(TAG, "Cannot list directory: %s", parent_dir.c_str());
       }
       
       return false;
