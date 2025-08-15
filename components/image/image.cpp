@@ -156,6 +156,8 @@ bool Image::load_from_sd() {
 }
 
 bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
+  ESP_LOGI(TAG, "Attempting to read SD file: %s", path.c_str());
+  
   // Utilise le lecteur spécifique à l'image ou le lecteur global
   SDFileReader reader = sd_file_reader_ ? sd_file_reader_ : global_sd_reader_;
   
@@ -165,8 +167,30 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
     // Tentative de lecture directe si pas de reader configuré
     FILE* file = fopen(path.c_str(), "rb");
     if (!file) {
-      ESP_LOGE(TAG, "Cannot open file: %s", path.c_str());
-      return false;
+      ESP_LOGE(TAG, "Cannot open file: %s (errno: %d - %s)", path.c_str(), errno, strerror(errno));
+      
+      // Essayer avec des chemins alternatifs
+      std::vector<std::string> alt_paths = {
+        std::string("/sdcard") + (path.starts_with("/") ? "" : "/") + path,
+        std::string("/sdcard/") + (path.starts_with("sdcard/") ? path.substr(7) : path),
+        path
+      };
+      
+      for (const auto& alt_path : alt_paths) {
+        if (alt_path != path) {
+          ESP_LOGW(TAG, "Trying alternative path: %s", alt_path.c_str());
+          file = fopen(alt_path.c_str(), "rb");
+          if (file) {
+            ESP_LOGI(TAG, "Successfully opened with alternative path: %s", alt_path.c_str());
+            break;
+          }
+        }
+      }
+      
+      if (!file) {
+        ESP_LOGE(TAG, "All file open attempts failed for: %s", path.c_str());
+        return false;
+      }
     }
     
     // Obtenir la taille du fichier
@@ -174,20 +198,48 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
     
-    if (file_size <= 0) {
-      ESP_LOGE(TAG, "Invalid file size: %ld", file_size);
+    if (file_size <= 0 || file_size > 50 * 1024 * 1024) { // Max 50MB pour sécurité
+      ESP_LOGE(TAG, "Invalid file size: %ld bytes", file_size);
       fclose(file);
       return false;
     }
     
-    // Lire le fichier
-    data.resize(file_size);
-    size_t bytes_read = fread(data.data(), 1, file_size, file);
+    ESP_LOGI(TAG, "File size: %ld bytes", file_size);
+    
+    // Lire le fichier par chunks pour éviter les problèmes de mémoire
+    data.clear();
+    data.reserve(file_size);
+    
+    constexpr size_t CHUNK_SIZE = 8192;
+    std::vector<uint8_t> chunk(CHUNK_SIZE);
+    
+    size_t total_read = 0;
+    while (total_read < (size_t)file_size) {
+      size_t to_read = std::min(CHUNK_SIZE, (size_t)file_size - total_read);
+      size_t bytes_read = fread(chunk.data(), 1, to_read, file);
+      
+      if (bytes_read == 0) {
+        if (ferror(file)) {
+          ESP_LOGE(TAG, "Error reading file at position %zu", total_read);
+          fclose(file);
+          return false;
+        }
+        break; // EOF
+      }
+      
+      data.insert(data.end(), chunk.begin(), chunk.begin() + bytes_read);
+      total_read += bytes_read;
+      
+      // Reset watchdog périodiquement
+      if (total_read % (64 * 1024) == 0) {
+        esp_task_wdt_reset();
+      }
+    }
+    
     fclose(file);
     
-    if (bytes_read != (size_t)file_size) {
-      ESP_LOGE(TAG, "Failed to read complete file: %zu/%ld bytes", bytes_read, file_size);
-      return false;
+    if (total_read != (size_t)file_size) {
+      ESP_LOGW(TAG, "Read size mismatch: expected %ld, got %zu bytes", file_size, total_read);
     }
     
     ESP_LOGI(TAG, "SD file read successfully using direct access, size: %zu bytes", data.size());
@@ -197,42 +249,12 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
   ESP_LOGI(TAG, "Reading SD file using configured reader: %s", path.c_str());
   bool result = reader(path, data);
   if (result) {
-    ESP_LOGI(TAG, "SD file read successfully, size: %zu bytes", data.size());
+    ESP_LOGI(TAG, "SD file read successfully via reader, size: %zu bytes", data.size());
   } else {
-    ESP_LOGE(TAG, "Failed to read SD file: %s", path.c_str());
+    ESP_LOGE(TAG, "Failed to read SD file via reader: %s", path.c_str());
   }
   
   return result;
-}
-
-bool Image::decode_image_from_sd() {
-  std::vector<uint8_t> file_data;
-  if (!read_sd_file(sd_path_, file_data)) {
-    return false;
-  }
-
-  // Détecte le format d'image - SIMPLIFIÉ: support JPEG et PNG seulement
-  if (file_data.size() >= 4) {
-    // JPEG: FF D8 FF
-    if (file_data[0] == 0xFF && file_data[1] == 0xD8 && file_data[2] == 0xFF) {
-      ESP_LOGI(TAG, "Detected JPEG format");
-      return decode_jpeg_data(file_data);
-    }
-    // PNG: 89 50 4E 47
-    else if (file_data[0] == 0x89 && file_data[1] == 0x50 && 
-             file_data[2] == 0x4E && file_data[3] == 0x47) {
-      ESP_LOGI(TAG, "Detected PNG format");
-      return decode_png_data(file_data);
-    }
-    // Pour les autres formats, on utilise le décodeur JPEG par défaut
-    else {
-      ESP_LOGW(TAG, "Unknown format, using JPEG decoder as fallback");
-      return decode_jpeg_data(file_data);
-    }
-  }
-
-  ESP_LOGE(TAG, "File too small or corrupted");
-  return false;
 }
 
 bool Image::decode_jpeg_data(const std::vector<uint8_t> &jpeg_data) {
