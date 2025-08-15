@@ -190,122 +190,124 @@ bool Image::read_sd_file(const std::string &path, std::vector<uint8_t> &data) {
   // Utilise le lecteur spécifique à l'image ou le lecteur global
   SDFileReader reader = sd_file_reader_ ? sd_file_reader_ : global_sd_reader_;
 
-  // CORRECTION : Mapping des chemins SD - découvrir le vrai point de montage
-  auto map_path = [](const std::string &p) -> std::vector<std::string> {
-    std::vector<std::string> candidates;
+  // CORRECTION pour point de montage à la racine "/"
+  auto map_path = [](const std::string &p) -> std::string {
+    std::string result = p;
     
-    // Candidat 1: Chemin tel quel
-    candidates.push_back(p);
-    
-    // Candidat 2: Si commence par /sdcard/, essayer sans le préfixe
-    if (p.rfind("/sdcard/", 0) == 0) {
-      std::string relative = p.substr(8); // Enlever "/sdcard/"
-      candidates.push_back("/" + relative);
-      candidates.push_back(relative);
+    // Si le chemin commence par "/sdcard/", remplacer par "/"
+    if (result.rfind("/sdcard/", 0) == 0) {
+      result = "/" + result.substr(8); // Enlever "/sdcard/" et garder juste "/"
     }
     
-    // Candidat 3: Chemins de montage courants pour ESP32
-    std::string filename = p.substr(p.find_last_of("/") + 1);
-    candidates.push_back("/sdcard/" + filename);
-    candidates.push_back("/sd/" + filename);
-    candidates.push_back("/mnt/sdcard/" + filename);
-    candidates.push_back("/fat/" + filename);
+    // Si le chemin ne commence pas par "/", l'ajouter
+    if (!result.empty() && result[0] != '/') {
+      result = "/" + result;
+    }
     
-    // Candidat 4: Juste le nom du fichier à la racine
-    candidates.push_back("/" + filename);
-    candidates.push_back(filename);
+    // Nettoyer les doubles slashes
+    size_t pos = 0;
+    while ((pos = result.find("//", pos)) != std::string::npos) {
+      result.replace(pos, 2, "/");
+      pos += 1; // Éviter la boucle infinie
+    }
     
-    return candidates;
+    ESP_LOGI(TAG, "Path mapping: '%s' -> '%s'", p.c_str(), result.c_str());
+    return result;
   };
 
-  std::vector<std::string> path_candidates = map_path(path);
+  std::string fixed_path = map_path(path);
 
   if (!reader) {
     ESP_LOGE(TAG, "No SD file reader available - trying direct file access");
 
-    // Essayer tous les candidats de chemins
-    for (const auto& candidate_path : path_candidates) {
-      ESP_LOGD(TAG, "Trying path: %s", candidate_path.c_str());
+    FILE *file = fopen(fixed_path.c_str(), "rb");
+    if (!file) {
+      ESP_LOGE(TAG, "Cannot open file: %s (errno: %d - %s)", fixed_path.c_str(), errno, strerror(errno));
       
-      FILE *file = fopen(candidate_path.c_str(), "rb");
-      if (file) {
-        ESP_LOGI(TAG, "Successfully opened file at: %s", candidate_path.c_str());
-        
-        // Obtenir la taille du fichier
-        fseek(file, 0, SEEK_END);
-        long file_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-
-        if (file_size <= 0 || file_size > 50 * 1024 * 1024) {
-          ESP_LOGE(TAG, "Invalid file size: %ld bytes", file_size);
-          fclose(file);
-          continue; // Essayer le prochain candidat
+      // Debug : lister le contenu du répertoire parent
+      std::string parent_dir = fixed_path.substr(0, fixed_path.find_last_of('/'));
+      if (parent_dir.empty()) parent_dir = "/";
+      
+      ESP_LOGI(TAG, "Listing directory: %s", parent_dir.c_str());
+      DIR* dir = opendir(parent_dir.c_str());
+      if (dir) {
+        struct dirent* entry;
+        int count = 0;
+        while ((entry = readdir(dir)) != nullptr && count < 10) {
+          ESP_LOGI(TAG, "  Found: %s %s", 
+                  entry->d_type == DT_DIR ? "[DIR]" : "[FILE]", 
+                  entry->d_name);
+          count++;
         }
-
-        ESP_LOGI(TAG, "File size: %ld bytes", file_size);
-
-        // Lire le fichier par chunks
-        data.clear();
-        data.reserve(file_size);
-
-        constexpr size_t CHUNK_SIZE = 8192;
-        std::vector<uint8_t> chunk(CHUNK_SIZE);
-        size_t total_read = 0;
-        bool read_success = true;
-
-        while (total_read < (size_t)file_size) {
-          size_t to_read = std::min(CHUNK_SIZE, (size_t)file_size - total_read);
-          size_t bytes_read = fread(chunk.data(), 1, to_read, file);
-
-          if (bytes_read == 0) {
-            if (ferror(file)) {
-              ESP_LOGE(TAG, "Error reading file at position %zu", total_read);
-              read_success = false;
-              break;
-            }
-            break;
-          }
-
-          data.insert(data.end(), chunk.begin(), chunk.begin() + bytes_read);
-          total_read += bytes_read;
-
-          if (total_read % (64 * 1024) == 0) {
-            esp_task_wdt_reset();
-          }
-        }
-
-        fclose(file);
-
-        if (read_success && total_read == (size_t)file_size) {
-          ESP_LOGI(TAG, "SD file read successfully using direct access, size: %zu bytes", data.size());
-          return true;
-        } else {
-          ESP_LOGW(TAG, "Read failed or size mismatch for path: %s", candidate_path.c_str());
-          data.clear(); // Nettoyer en cas d'échec partiel
-        }
+        closedir(dir);
       } else {
-        ESP_LOGD(TAG, "Cannot open file: %s (errno: %d - %s)", 
-                candidate_path.c_str(), errno, strerror(errno));
+        ESP_LOGE(TAG, "Cannot list directory: %s", parent_dir.c_str());
+      }
+      
+      return false;
+    }
+
+    // Obtenir la taille du fichier
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    if (file_size <= 0 || file_size > 50 * 1024 * 1024) {
+      ESP_LOGE(TAG, "Invalid file size: %ld bytes", file_size);
+      fclose(file);
+      return false;
+    }
+
+    ESP_LOGI(TAG, "File size: %ld bytes", file_size);
+
+    // Lire le fichier par chunks
+    data.clear();
+    data.reserve(file_size);
+
+    constexpr size_t CHUNK_SIZE = 8192;
+    std::vector<uint8_t> chunk(CHUNK_SIZE);
+    size_t total_read = 0;
+
+    while (total_read < (size_t)file_size) {
+      size_t to_read = std::min(CHUNK_SIZE, (size_t)file_size - total_read);
+      size_t bytes_read = fread(chunk.data(), 1, to_read, file);
+
+      if (bytes_read == 0) {
+        if (ferror(file)) {
+          ESP_LOGE(TAG, "Error reading file at position %zu", total_read);
+          fclose(file);
+          return false;
+        }
+        break;
+      }
+
+      data.insert(data.end(), chunk.begin(), chunk.begin() + bytes_read);
+      total_read += bytes_read;
+
+      if (total_read % (64 * 1024) == 0) {
+        esp_task_wdt_reset();
       }
     }
-    
-    ESP_LOGE(TAG, "Failed to open file with any path candidate");
-    return false;
+
+    fclose(file);
+
+    if (total_read != (size_t)file_size) {
+      ESP_LOGW(TAG, "Read size mismatch: expected %ld, got %zu bytes", file_size, total_read);
+    }
+
+    ESP_LOGI(TAG, "SD file read successfully using direct access, size: %zu bytes", data.size());
+    return true;
   }
 
-  // Avec un lecteur SD configuré, essayer les candidats
-  ESP_LOGI(TAG, "Reading SD file using configured reader");
-  for (const auto& candidate_path : path_candidates) {
-    ESP_LOGD(TAG, "Trying reader with path: %s", candidate_path.c_str());
-    
-    if (reader(candidate_path, data)) {
-      ESP_LOGI(TAG, "SD file read successfully via reader, size: %zu bytes", data.size());
-      return true;
-    }
+  ESP_LOGI(TAG, "Reading SD file using configured reader: %s", fixed_path.c_str());
+  bool result = reader(fixed_path, data);
+  if (result) {
+    ESP_LOGI(TAG, "SD file read successfully via reader, size: %zu bytes", data.size());
+  } else {
+    ESP_LOGE(TAG, "Failed to read SD file via reader: %s", fixed_path.c_str());
   }
-  
-  ESP_LOGE(TAG, "Failed to read SD file via reader with any path candidate");
-  return false;
+
+  return result;
 }
 
 bool Image::decode_jpeg_data(const std::vector<uint8_t> &jpeg_data) {
