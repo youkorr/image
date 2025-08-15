@@ -675,36 +675,35 @@ CONFIG_SCHEMA = _config_schema
 
 # FONCTION CORRIGÉE : normalise une entrée en un chemin utilisé par le runtime SD (/sdcard/...)
 def normalize_to_sd_path(path: str) -> str:
-    """Normalize path to SD card format (/sdcard/...)"""
+    """Normalize path to SD card format for root mount (/)"""
     p = str(path).strip()
     p = p.replace("\\", "/")
     # collapse multiple slashes
     p = re.sub(r"/+", "/", p)
     
-    # Si commence par /sd_card/ -> convertir vers /sdcard/
+    # Si commence par /sd_card/ -> convertir vers /
     if p.startswith("/sd_card/"):
         rest = p[9:]  # Enlever "/sd_card/"
-        return "/sdcard/" + rest
+        return "/" + rest
     elif p.startswith("sd_card/"):
         rest = p[8:]  # Enlever "sd_card/"
-        return "/sdcard/" + rest
+        return "/" + rest
     
-    # Si contient sdcard ou sd_card -> return /sdcard/...
-    m = re.search(r"(sd[_]?card)(/.*)?", p, flags=re.I)
-    if m:
-        rest = m.group(2) or ""
-        # ensure leading slash in rest
-        if not rest.startswith("/"):
-            rest = "/" + rest.lstrip("/")
-        return "/sdcard" + rest
+    # Si commence par /sdcard/ -> convertir vers /
+    if p.startswith("/sdcard/"):
+        rest = p[8:]  # Enlever "/sdcard/"
+        return "/" + rest
+    elif p.startswith("sdcard/"):
+        rest = p[7:]  # Enlever "sdcard/"
+        return "/" + rest
     
-    # Si chemin absolu fourni (commence par '/'), mapper dans /sdcard/<rest>
-    if p.startswith("/"):
-        rest = p.lstrip("/")
-        return "/sdcard/" + rest
+    # Si chemin relatif (pas de slash initial), ajouter slash
+    if not p.startswith("/"):
+        return "/" + p
     
-    # Sinon traiter comme nom de fichier ou chemin relatif -> mettre sous /sdcard/
-    return "/sdcard/" + p.lstrip("/")
+    # Sinon retourner tel quel (déjà un chemin absolu)
+    _LOGGER.info(f"Chemin SD normalisé: {path} -> {p}")
+    return p
 
 
 def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
