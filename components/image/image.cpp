@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <stdio.h>
 #include <cmath>
+#include "esp_task_wdt.h"
 
 namespace esphome {
 namespace image {
