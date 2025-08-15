@@ -346,7 +346,11 @@ def is_sd_card_path(path_str: str) -> bool:
     return (
         path_str.startswith("sd_card/") or 
         path_str.startswith("sd_card//") or
-        path_str.startswith("/sdcard/")
+        path_str.startswith("/sdcard/") or
+        path_str.startswith("/") or
+        path_str.startswith("//") or
+        path_str.startswith("/sd/") or
+        path_str.startswith("sd/")
     )
 
 
