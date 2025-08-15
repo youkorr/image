@@ -7,6 +7,12 @@
 #include <cmath>
 #include "esp_task_wdt.h"
 
+#ifdef USE_ESP32
+#include <dirent.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
+
 namespace esphome {
 namespace image {
 
