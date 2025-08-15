@@ -30,7 +30,7 @@ from esphome.core import CORE, HexInt
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "image"
-DEPENDENCIES = ["display", "sd_mmc_card"]
+DEPENDENCIES = ["display", "sdcard"]
 
 image_ns = cg.esphome_ns.namespace("image")
 
@@ -300,7 +300,7 @@ IMAGE_DOWNLOAD_TIMEOUT = 30  # seconds
 
 SOURCE_LOCAL = "local"
 SOURCE_WEB = "web"
-SOURCE_SD_MMC_CARD = "sd_mmc_card"
+SOURCE_SDCARD = "sdcard"
 
 SOURCE_MDI = "mdi"
 SOURCE_MDIL = "mdil"
@@ -331,21 +331,21 @@ def local_path(value):
     return str(CORE.relative_config_path(value))
 
 
-def sd_mmc_card_path(value):
+def sdcard_path(value):
     """Handle SD card path - return the path as-is for SD card sources"""
     value = value[CONF_PATH] if isinstance(value, dict) else value
     _LOGGER.info(f"SD card image path configured: {value}")
     return str(value)
 
 
-def is_sd_mmc_card_path(path_str: str) -> bool:
+def is_sdcard_path(path_str: str) -> bool:
     """Check if a path is an SD card path"""
     if not isinstance(path_str, str):
         return False
     path_str = path_str.strip()
     return (
-        path_str.startswith("sd_mmc_card/") or 
-        path_str.startswith("sd_mmc_card//") or
+        path_str.startswith("sdcard/") or 
+        path_str.startswith("sdcard//") or
         path_str.startswith("/sdcard/")
     )
 
@@ -374,7 +374,7 @@ def is_svg_file(file):
     if not file:
         return False
     # Pour les fichiers SD card, on ne peut pas vérifier le contenu
-    if isinstance(file, str) and is_sd_mmc_card_path(file):
+    if isinstance(file, str) and is_sdcard_path(file):
         return file.lower().endswith('.svg')
     with open(file, "rb") as f:
         return "<svg" in str(f.read(1024))
@@ -401,7 +401,7 @@ def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
     # Vérification pour les chemins SD card - amélioration de la détection
-    if is_sd_mmc_card_path(value):
+    if is_sdcard_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
         return value  # Retourne le chemin tel quel pour SD card
     
@@ -427,11 +427,11 @@ LOCAL_SCHEMA = cv.All(
 )
 
 # Ajout du schéma SD card
-SD_MMC_CARD_SCHEMA = cv.All(
+SDCARD_SCHEMA = cv.All(
     {
         cv.Required(CONF_PATH): cv.string,
     },
-    sd_mmc_card_path,
+    sdcard_path,
 )
 
 
@@ -461,7 +461,7 @@ TYPED_FILE_SCHEMA = cv.typed_schema(
     {
         SOURCE_LOCAL: LOCAL_SCHEMA,
         SOURCE_WEB: WEB_SCHEMA,
-        SOURCE_SD_MMC_CARD: SD_MMC_CARD_SCHEMA,  # Ajout du schéma SD card
+        SOURCE_SDCARD: SDCARD_SCHEMA,  # Ajout du schéma SD card
     }
     | {source: mdi_schema(source) for source in MDI_SOURCES},
     key=CONF_SOURCE,
@@ -513,7 +513,7 @@ def validate_settings(value):
         file_path = str(file)
         
         # Pour les fichiers SD card, on évite la validation locale
-        if is_sd_mmc_card_path(file_path):
+        if is_sdcard_path(file_path):
             _LOGGER.info(f"SD card image configured: {file_path}")
             return value
             
@@ -697,7 +697,7 @@ def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
     We try several candidate locations that users commonly use:
       - <sd_path> relative to project (sdcard/...)
       - original path stripped of leading slash
-      - sd_mmc_card/<basename>
+      - sdcard/<basename>
       - sdcard/<basename>
     """
     candidates = []
@@ -710,7 +710,7 @@ def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
     except Exception:
         pass
     try:
-        candidates.append(Path(CORE.relative_config_path("sd_mmc_card/" + Path(sd_path).name)))
+        candidates.append(Path(CORE.relative_config_path("sdcard/" + Path(sd_path).name)))
     except Exception:
         pass
     try:
@@ -729,7 +729,7 @@ async def write_image(config, all_frames=False):
     path_str = config[CONF_FILE]
 
     # Détecte si c'est une image de la carte SD
-    if is_sd_mmc_card_path(path_str):
+    if is_sdcard_path(path_str):
         _LOGGER.info(f"Traitement d'une image SD: {path_str}")
         sd_path = normalize_to_sd_path(path_str)
         
