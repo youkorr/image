@@ -10,8 +10,11 @@
 #include <functional>
 
 #ifdef USE_ESP32
+#include "esp_vfs_fat.h"
+#include "esp_netif.h"
 #include "driver/sdmmc_host.h"
 #include "driver/sdmmc_defs.h"
+#include "../sd_mmc_card/sd_mmc_card.h"
 #endif
 
 #ifdef USE_LVGL
@@ -67,6 +70,8 @@ class Image : public display::BaseImage {
   void set_sd_runtime(bool enabled) { this->sd_runtime_ = enabled; }
   void set_sd_file_reader(SDFileReader reader) { this->sd_file_reader_ = reader; }
   bool load_from_sd();
+
+  bool mount_sd_card(); 
   
   // Fonction statique pour enregistrer un lecteur de fichier global
   static void set_global_sd_reader(SDFileReader reader) { global_sd_reader_ = reader; }
@@ -89,6 +94,8 @@ class Image : public display::BaseImage {
   bool decode_png_data(const std::vector<uint8_t> &png_data);
   bool read_sd_file(const std::string &path, std::vector<uint8_t> &data);
   size_t get_expected_buffer_size() const;
+
+  bool sdcard_mounted_ = false; 
   
   // Propriétés
   int width_;
