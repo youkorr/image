@@ -936,7 +936,10 @@ def validate_pillow_installed(value):
 
 
 def validate_cairosvg_installed(value):
-    """Valide que cairosvg est installé si nécessaire"""
+    """
+    Validate that cairosvg is installed and has the correct version.
+    The 'value' parameter is required by the validation framework but not used.
+    """
     try:
         import cairosvg
     except ImportError as err:
@@ -951,6 +954,8 @@ def validate_cairosvg_installed(value):
             "Please update your cairosvg installation to at least 2.2.0. "
             "(pip install -U cairosvg)"
         )
+    
+    # Return the value as expected by the validation framework
     return value
 
 
