@@ -432,17 +432,18 @@ def validate_type(image_types):
         return IMAGE_TYPE[value].validate(value)
     return validate
 
+
 def validate_settings(value):
-    """Validate the settings for a single image configuration."""
+    """
+    Validate the settings for a single image configuration.
+    """
     conf_type = value[CONF_TYPE]
     type_class = IMAGE_TYPE[conf_type]
     transparency = value[CONF_TRANSPARENCY].lower()
-    
     if transparency not in type_class.allow_config:
         raise cv.Invalid(
             f"Image format '{conf_type}' cannot have transparency: {transparency}"
         )
-    
     invert_alpha = value.get(CONF_INVERT_ALPHA, False)
     if (
         invert_alpha
@@ -450,27 +451,23 @@ def validate_settings(value):
         and CONF_INVERT_ALPHA not in type_class.allow_config
     ):
         raise cv.Invalid("No alpha channel to invert")
-    
     if value.get(CONF_BYTE_ORDER) is not None and not callable(
         getattr(type_class, "set_big_endian", None)
     ):
         raise cv.Invalid(
             f"Image format '{conf_type}' does not support byte order configuration"
         )
-    
     if file := value.get(CONF_FILE):
-        # Gestion spéciale pour les images SD card
-        if isinstance(file, dict) and file.get(CONF_SOURCE) == SOURCE_SD_CARD:
-            _LOGGER.info(f"SD card image configured: {file[CONF_PATH]}")
-            return value
-        elif isinstance(file, str) and is_sd_card_path(file):
-            _LOGGER.info(f"SD card image configured: {file}")
-            return value
-        
         file_path = str(file)
-        file = Path(file_path)
         
+        # Pour les fichiers SD card, on évite la validation locale
+        if is_sd_card_path(file_path):
+            _LOGGER.info(f"SD card image configured: {file_path}")
+            return value
+            
+        file = Path(file)
         if is_svg_file(file):
+            # FIX: Call validate_cairosvg_installed without parameters
             validate_cairosvg_installed()
         else:
             try:
@@ -479,7 +476,6 @@ def validate_settings(value):
                 raise cv.Invalid(
                     f"File can't be opened as image: {file.absolute()}"
                 ) from exc
-    
     return value
 
 IMAGE_ID_SCHEMA = {
