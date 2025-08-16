@@ -20,11 +20,6 @@ namespace image {
 
 static const char *const TAG = "image";
 
-
-Image::Image(const uint8_t *data_start, int width, int height, ImageType type, TransparencyType transparency)
-    : data_start_(data_start), width_(width), height_(height), type_(type), transparency_(transparency) {}
-
-
 // Lecteur de fichier SD global
 SDFileReader Image::global_sd_reader_ = nullptr;
 
