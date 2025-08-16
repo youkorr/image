@@ -32,6 +32,8 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "image"
 DEPENDENCIES = ["display"]
 
+CONF_SD_MMC_CARD_ID = "sd_mmc_card_id"
+
 image_ns = cg.esphome_ns.namespace("image")
 
 ImageType = image_ns.enum("ImageType")
