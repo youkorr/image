@@ -32,15 +32,30 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "image"
 DEPENDENCIES = ["display"]
 
+# Import du composant sd_mmc_card pour pouvoir lier les composants
+CODEOWNERS = ["@youkorr"]
+AUTO_LOAD = []
+
+try:
+    from esphome.components import sd_mmc_card
+    CONF_SD_CARD_ID = "sd_card_id"
+    _LOGGER.info("sd_mmc_card component available")
+except ImportError:
+    sd_mmc_card = None
+    CONF_SD_CARD_ID = None
+    _LOGGER.warning("sd_mmc_card component not available")
+
 image_ns = cg.esphome_ns.namespace("image")
 
 ImageType = image_ns.enum("ImageType")
+TransparencyType = image_ns.enum("TransparencyType")
 
 CONF_OPAQUE = "opaque"
 CONF_CHROMA_KEY = "chroma_key"
 CONF_ALPHA_CHANNEL = "alpha_channel"
 CONF_INVERT_ALPHA = "invert_alpha"
 CONF_IMAGES = "images"
+CONF_TRANSPARENCY = "transparency"
 
 TRANSPARENCY_TYPES = (
     CONF_OPAQUE,
@@ -48,36 +63,21 @@ TRANSPARENCY_TYPES = (
     CONF_ALPHA_CHANNEL,
 )
 
-
 def get_image_type_enum(type):
     return getattr(ImageType, f"IMAGE_TYPE_{type.upper()}")
-
 
 def get_transparency_enum(transparency):
     return getattr(TransparencyType, f"TRANSPARENCY_{transparency.upper()}")
 
-
 class ImageEncoder:
-    """
-    Superclass of image type encoders
-    """
-
-    # Control which transparency options are available for a given type
+    """Superclass of image type encoders"""
     allow_config = {CONF_ALPHA_CHANNEL, CONF_CHROMA_KEY, CONF_OPAQUE}
 
-    # All imageencoder types are valid
     @staticmethod
     def validate(value):
         return value
 
     def __init__(self, width, height, transparency, dither, invert_alpha):
-        """
-        :param width:  The image width in pixels
-        :param height:  The image height in pixels
-        :param transparency: Transparency type
-        :param dither: Dither method
-        :param invert_alpha: True if the alpha channel should be inverted; for monochrome formats inverts the colours.
-        """
         self.transparency = transparency
         self.width = width
         self.height = height
@@ -88,35 +88,19 @@ class ImageEncoder:
         self.path = ""
 
     def convert(self, image, path):
-        """
-        Convert the image format
-        :param image:  Input image
-        :param path:  Path to the image file
-        :return: converted image
-        """
         return image
 
     def encode(self, pixel):
-        """
-        Encode a single pixel
-        """
+        pass
 
     def end_row(self):
-        """
-        Marks the end of a pixel row
-        :return:
-        """
-
+        pass
 
 def is_alpha_only(image: Image):
-    """
-    Check if an image (assumed to be RGBA) is only alpha
-    """
-    # Any alpha data?
+    """Check if an image (assumed to be RGBA) is only alpha"""
     if image.split()[-1].getextrema()[0] == 0xFF:
         return False
     return all(b.getextrema()[1] == 0 for b in image.split()[:-1])
-
 
 class ImageBinary(ImageEncoder):
     allow_config = {CONF_OPAQUE, CONF_INVERT_ALPHA, CONF_CHROMA_KEY}
@@ -142,13 +126,9 @@ class ImageBinary(ImageEncoder):
             self.index += 1
 
     def end_row(self):
-        """
-        Pad rows to a byte boundary
-        """
         if self.bitno != 0:
             self.bitno = 0
             self.index += 1
-
 
 class ImageGrayscale(ImageEncoder):
     allow_config = {CONF_ALPHA_CHANNEL, CONF_CHROMA_KEY, CONF_INVERT_ALPHA, CONF_OPAQUE}
@@ -158,8 +138,7 @@ class ImageGrayscale(ImageEncoder):
             if self.transparency != CONF_ALPHA_CHANNEL:
                 _LOGGER.warning(
                     "Grayscale image %s is alpha only, but transparency is set to %s",
-                    path,
-                    self.transparency,
+                    path, self.transparency,
                 )
                 self.transparency = CONF_ALPHA_CHANNEL
             image = image.split()[-1]
@@ -180,17 +159,10 @@ class ImageGrayscale(ImageEncoder):
         self.data[self.index] = b
         self.index += 1
 
-
 class ImageRGB565(ImageEncoder):
     def __init__(self, width, height, transparency, dither, invert_alpha):
         stride = 3 if transparency == CONF_ALPHA_CHANNEL else 2
-        super().__init__(
-            width * stride,
-            height,
-            transparency,
-            dither,
-            invert_alpha,
-        )
+        super().__init__(width * stride, height, transparency, dither, invert_alpha)
         self.big_endian = True
 
     def set_big_endian(self, big_endian: bool) -> None:
@@ -228,17 +200,10 @@ class ImageRGB565(ImageEncoder):
             self.data[self.index] = a
             self.index += 1
 
-
 class ImageRGB(ImageEncoder):
     def __init__(self, width, height, transparency, dither, invert_alpha):
         stride = 4 if transparency == CONF_ALPHA_CHANNEL else 3
-        super().__init__(
-            width * stride,
-            height,
-            transparency,
-            dither,
-            invert_alpha,
-        )
+        super().__init__(width * stride, height, transparency, dither, invert_alpha)
 
     def convert(self, image, path):
         return image.convert("RGBA")
@@ -264,12 +229,8 @@ class ImageRGB(ImageEncoder):
             self.data[self.index] = a
             self.index += 1
 
-
 class ReplaceWith:
-    """
-    Placeholder class to provide feedback on deprecated features
-    """
-
+    """Placeholder class to provide feedback on deprecated features"""
     allow_config = {CONF_ALPHA_CHANNEL, CONF_CHROMA_KEY, CONF_OPAQUE}
 
     def __init__(self, replace_with):
@@ -279,7 +240,6 @@ class ReplaceWith:
         raise cv.Invalid(
             f"Image type {value} is removed; replace with {self.replace_with}"
         )
-
 
 IMAGE_TYPE = {
     "BINARY": ImageBinary,
@@ -291,17 +251,12 @@ IMAGE_TYPE = {
     "RGBA": ReplaceWith("'type: RGB' and 'transparency: alpha_channel'"),
 }
 
-TransparencyType = image_ns.enum("TransparencyType")
-
-CONF_TRANSPARENCY = "transparency"
-
 # If the MDI file cannot be downloaded within this time, abort.
 IMAGE_DOWNLOAD_TIMEOUT = 30  # seconds
 
 SOURCE_LOCAL = "local"
 SOURCE_WEB = "web"
 SOURCE_SD_CARD = "sd_card"
-
 SOURCE_MDI = "mdi"
 SOURCE_MDIL = "mdil"
 SOURCE_MEMORY = "memory"
@@ -313,9 +268,7 @@ MDI_SOURCES = {
 }
 
 Image_ = image_ns.class_("Image")
-
 INSTANCE_TYPE = Image_
-
 
 def compute_local_image_path(value) -> Path:
     url = value[CONF_URL] if isinstance(value, dict) else value
@@ -325,19 +278,27 @@ def compute_local_image_path(value) -> Path:
     base_dir = external_files.compute_local_file_dir(DOMAIN)
     return base_dir / key
 
-
 def local_path(value):
     value = value[CONF_PATH] if isinstance(value, dict) else value
     return str(CORE.relative_config_path(value))
 
-
 def sd_card_path(value):
     """Retourne le chemin complet sur la racine de la SD card"""
-    value = value[CONF_PATH] if isinstance(value, dict) else value
+    if isinstance(value, dict):
+        path_value = value[CONF_PATH]
+        sd_card_id = value.get(CONF_SD_CARD_ID)
+    else:
+        path_value = value
+        sd_card_id = None
+    
     # Supprime un éventuel slash en début pour éviter les doublons
-    value = value.lstrip("/\\")
-    full_path = "/" + value  # chemin à partir de la racine de la SD
-    _LOGGER.info(f"Chemin SD résolu: {full_path}")
+    path_value = path_value.lstrip("/\\")
+    full_path = "/" + path_value  # chemin à partir de la racine de la SD
+    _LOGGER.info(f"Chemin SD résolu: {full_path} (SD card ID: {sd_card_id})")
+    
+    if isinstance(value, dict):
+        value[CONF_PATH] = full_path
+        return value
     return full_path
 
 def is_sd_card_path(path_str: str) -> bool:
@@ -349,32 +310,25 @@ def is_sd_card_path(path_str: str) -> bool:
         path_str.startswith("sd_card/") or 
         path_str.startswith("sd_card//") or
         path_str.startswith("/sdcard/") or
-        
         path_str.startswith("//") or
         path_str.startswith("/sd/") or
         path_str.startswith("sd/")
     )
 
-
-
 def download_file(url, path):
     external_files.download_content(url, path, IMAGE_DOWNLOAD_TIMEOUT)
     return str(path)
-
 
 def download_gh_svg(value, source):
     mdi_id = value[CONF_ICON] if isinstance(value, dict) else value
     base_dir = external_files.compute_local_file_dir(DOMAIN) / source
     path = base_dir / f"{mdi_id}.svg"
-
     url = MDI_SOURCES[source] + mdi_id + ".svg"
     return download_file(url, path)
-
 
 def download_image(value):
     value = value[CONF_URL] if isinstance(value, dict) else value
     return download_file(value, compute_local_image_path(value))
-
 
 def is_svg_file(file):
     if not file:
@@ -384,7 +338,6 @@ def is_svg_file(file):
         return file.lower().endswith('.svg')
     with open(file, "rb") as f:
         return "<svg" in str(f.read(1024))
-
 
 def validate_cairosvg_installed():
     try:
@@ -402,14 +355,13 @@ def validate_cairosvg_installed():
             "(pip install -U cairosvg)"
         )
 
-
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
-    # Vérification pour les chemins SD card - VERSION CORRIGÉE
+    # Vérification pour les chemins SD card
     if is_sd_card_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
-        return value  # Retourne le chemin tel quel pour SD card
+        return value
     
     parts = value.strip().split(":")
     if len(parts) == 2 and parts[0] in MDI_SOURCES:
@@ -424,7 +376,6 @@ def validate_file_shorthand(value):
     value = cv.file_(value)
     return local_path(value)
 
-
 LOCAL_SCHEMA = cv.All(
     {
         cv.Required(CONF_PATH): cv.file_,
@@ -432,76 +383,66 @@ LOCAL_SCHEMA = cv.All(
     local_path,
 )
 
-# Ajout du schéma SD card
-SD_CARD_SCHEMA = cv.All(
-    {
+# Schéma SD card avec support optionnel du composant sd_mmc_card
+def create_sd_card_schema():
+    schema_dict = {
         cv.Required(CONF_PATH): cv.string,
-    },
-    sd_card_path,
-)
+    }
+    
+    # Ajout conditionnel du champ sd_card_id si le composant est disponible
+    if sd_mmc_card and CONF_SD_CARD_ID:
+        schema_dict[cv.Optional(CONF_SD_CARD_ID)] = cv.use_id(sd_mmc_card.SdMmc)
+    
+    return cv.All(cv.Schema(schema_dict), sd_card_path)
 
+SD_CARD_SCHEMA = create_sd_card_schema()
 
 def mdi_schema(source):
     def validate_mdi(value):
         return download_gh_svg(value, source)
-
     return cv.All(
-        cv.Schema(
-            {
-                cv.Required(CONF_ICON): cv.string,
-            }
-        ),
+        cv.Schema({cv.Required(CONF_ICON): cv.string}),
         validate_mdi,
     )
 
-
 WEB_SCHEMA = cv.All(
-    {
-        cv.Required(CONF_URL): cv.string,
-    },
+    {cv.Required(CONF_URL): cv.string},
     download_image,
 )
-
 
 TYPED_FILE_SCHEMA = cv.typed_schema(
     {
         SOURCE_LOCAL: LOCAL_SCHEMA,
         SOURCE_WEB: WEB_SCHEMA,
-        SOURCE_SD_CARD: SD_CARD_SCHEMA,  # Ajout du schéma SD card
-    }
-    | {source: mdi_schema(source) for source in MDI_SOURCES},
+        SOURCE_SD_CARD: SD_CARD_SCHEMA,
+    } | {source: mdi_schema(source) for source in MDI_SOURCES},
     key=CONF_SOURCE,
 )
-
 
 def validate_transparency(choices=TRANSPARENCY_TYPES):
     def validate(value):
         if isinstance(value, bool):
             value = str(value)
         return cv.one_of(*choices, lower=True)(value)
-
     return validate
-
 
 def validate_type(image_types):
     def validate(value):
         value = cv.one_of(*image_types, upper=True)(value)
         return IMAGE_TYPE[value].validate(value)
-
     return validate
 
-
 def validate_settings(value):
-    """
-    Validate the settings for a single image configuration.
-    """
+    """Validate the settings for a single image configuration."""
     conf_type = value[CONF_TYPE]
     type_class = IMAGE_TYPE[conf_type]
     transparency = value[CONF_TRANSPARENCY].lower()
+    
     if transparency not in type_class.allow_config:
         raise cv.Invalid(
             f"Image format '{conf_type}' cannot have transparency: {transparency}"
         )
+    
     invert_alpha = value.get(CONF_INVERT_ALPHA, False)
     if (
         invert_alpha
@@ -509,21 +450,26 @@ def validate_settings(value):
         and CONF_INVERT_ALPHA not in type_class.allow_config
     ):
         raise cv.Invalid("No alpha channel to invert")
+    
     if value.get(CONF_BYTE_ORDER) is not None and not callable(
         getattr(type_class, "set_big_endian", None)
     ):
         raise cv.Invalid(
             f"Image format '{conf_type}' does not support byte order configuration"
         )
+    
     if file := value.get(CONF_FILE):
-        file_path = str(file)
-        
-        # Pour les fichiers SD card, on évite la validation locale
-        if is_sd_card_path(file_path):
-            _LOGGER.info(f"SD card image configured: {file_path}")
+        # Gestion spéciale pour les images SD card
+        if isinstance(file, dict) and file.get(CONF_SOURCE) == SOURCE_SD_CARD:
+            _LOGGER.info(f"SD card image configured: {file[CONF_PATH]}")
             return value
-            
-        file = Path(file)
+        elif isinstance(file, str) and is_sd_card_path(file):
+            _LOGGER.info(f"SD card image configured: {file}")
+            return value
+        
+        file_path = str(file)
+        file = Path(file_path)
+        
         if is_svg_file(file):
             validate_cairosvg_installed()
         else:
@@ -533,8 +479,8 @@ def validate_settings(value):
                 raise cv.Invalid(
                     f"File can't be opened as image: {file.absolute()}"
                 ) from exc
+    
     return value
-
 
 IMAGE_ID_SCHEMA = {
     cv.Required(CONF_ID): cv.declare_id(Image_),
@@ -542,45 +488,33 @@ IMAGE_ID_SCHEMA = {
     cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
 }
 
-
 OPTIONS_SCHEMA = {
     cv.Optional(CONF_RESIZE): cv.dimensions,
-    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of(
-        "NONE", "FLOYDSTEINBERG", upper=True
-    ),
+    cv.Optional(CONF_DITHER, default="NONE"): cv.one_of("NONE", "FLOYDSTEINBERG", upper=True),
     cv.Optional(CONF_INVERT_ALPHA, default=False): cv.boolean,
     cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
     cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
     cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
-    
 }
 
 OPTIONS = [key.schema for key in OPTIONS_SCHEMA]
 
-# image schema with no defaults, used with `CONF_IMAGES` in the config
 IMAGE_SCHEMA_NO_DEFAULTS = {
     **IMAGE_ID_SCHEMA,
     **{cv.Optional(key): OPTIONS_SCHEMA[key] for key in OPTIONS},
 }
 
-BASE_SCHEMA = cv.Schema(
-    {
-        **IMAGE_ID_SCHEMA,
-        **OPTIONS_SCHEMA,
-    }
-).add_extra(validate_settings)
+BASE_SCHEMA = cv.Schema({
+    **IMAGE_ID_SCHEMA,
+    **OPTIONS_SCHEMA,
+}).add_extra(validate_settings)
 
-IMAGE_SCHEMA = BASE_SCHEMA.extend(
-    {
-        cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
-    }
-)
-
+IMAGE_SCHEMA = BASE_SCHEMA.extend({
+    cv.Required(CONF_TYPE): validate_type(IMAGE_TYPE),
+})
 
 def validate_defaults(value):
-    """
-    Validate the options for images with defaults
-    """
+    """Validate the options for images with defaults"""
     defaults = value[CONF_DEFAULTS]
     result = []
     for index, image in enumerate(value[CONF_IMAGES]):
@@ -591,7 +525,6 @@ def validate_defaults(value):
                 path=[CONF_IMAGES, index],
             )
         type_class = IMAGE_TYPE[type]
-        # A default byte order should be simply ignored if the type does not support it
         available_options = [*OPTIONS]
         if (
             not callable(getattr(type_class, "set_big_endian", None))
@@ -606,46 +539,25 @@ def validate_defaults(value):
         result.append(config)
     return result
 
-
 def typed_image_schema(image_type):
-    """
-    Construct a schema for a specific image type, allowing transparency options
-    """
+    """Construct a schema for a specific image type, allowing transparency options"""
     return cv.Any(
-        cv.Schema(
-            {
-                cv.Optional(t.lower()): cv.ensure_list(
-                    BASE_SCHEMA.extend(
-                        {
-                            cv.Optional(
-                                CONF_TRANSPARENCY, default=t
-                            ): validate_transparency((t,)),
-                            cv.Optional(CONF_TYPE, default=image_type): validate_type(
-                                (image_type,)
-                            ),
-                        }
-                    )
-                )
-                for t in IMAGE_TYPE[image_type].allow_config.intersection(
-                    TRANSPARENCY_TYPES
-                )
-            }
-        ),
-        # Allow a default configuration with no transparency preselected
-        cv.ensure_list(
-            BASE_SCHEMA.extend(
-                {
-                    cv.Optional(
-                        CONF_TRANSPARENCY, default=CONF_OPAQUE
-                    ): validate_transparency(),
-                    cv.Optional(CONF_TYPE, default=image_type): validate_type(
-                        (image_type,)
-                    ),
-                }
+        cv.Schema({
+            cv.Optional(t.lower()): cv.ensure_list(
+                BASE_SCHEMA.extend({
+                    cv.Optional(CONF_TRANSPARENCY, default=t): validate_transparency((t,)),
+                    cv.Optional(CONF_TYPE, default=image_type): validate_type((image_type,)),
+                })
             )
+            for t in IMAGE_TYPE[image_type].allow_config.intersection(TRANSPARENCY_TYPES)
+        }),
+        cv.ensure_list(
+            BASE_SCHEMA.extend({
+                cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
+                cv.Optional(CONF_TYPE, default=image_type): validate_type((image_type,)),
+            })
         ),
-    ) 
-
+    )
 
 def _config_schema(config):
     if isinstance(config, list):
@@ -656,12 +568,10 @@ def _config_schema(config):
         )
     if CONF_DEFAULTS in config or CONF_IMAGES in config:
         return validate_defaults(
-            cv.Schema(
-                {
-                    cv.Required(CONF_DEFAULTS): OPTIONS_SCHEMA,
-                    cv.Required(CONF_IMAGES): cv.ensure_list(IMAGE_SCHEMA_NO_DEFAULTS),
-                }
-            )(config)
+            cv.Schema({
+                cv.Required(CONF_DEFAULTS): OPTIONS_SCHEMA,
+                cv.Required(CONF_IMAGES): cv.ensure_list(IMAGE_SCHEMA_NO_DEFAULTS),
+            })(config)
         )
     if CONF_ID in config or CONF_FILE in config:
         return cv.ensure_list(IMAGE_SCHEMA)([config])
@@ -669,17 +579,12 @@ def _config_schema(config):
         {cv.Optional(t.lower()): typed_image_schema(t) for t in IMAGE_TYPE}
     )(config)
 
-
 CONFIG_SCHEMA = _config_schema
 
-
-# FONCTION CORRIGÉE : normalise une entrée en un chemin utilisé par le runtime SD (/sdcard/...)
 def normalize_to_sd_path(path: str) -> str:
     """Normalize path to SD card format for root mount (/)"""
-    p = str(path).strip()
-    p = p.replace("\\", "/")
-    # collapse multiple slashes
-    p = re.sub(r"/+", "/", p)
+    p = str(path).strip().replace("\\", "/")
+    p = re.sub(r"/+", "/", p)  # collapse multiple slashes
     
     # Si commence par /sd_card/ -> convertir vers /
     if p.startswith("/sd_card/"):
@@ -701,20 +606,11 @@ def normalize_to_sd_path(path: str) -> str:
     if not p.startswith("/"):
         return "/" + p
     
-    # Sinon retourner tel quel (déjà un chemin absolu)
     _LOGGER.info(f"Chemin SD normalisé: {path} -> {p}")
     return p
 
-
 def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
-    """
-    Attempt to find a local copy inside the project dir for build-time processing.
-    We try several candidate locations that users commonly use:
-      - <sd_path> relative to project (sdcard/...)
-      - original path stripped of leading slash
-      - sd_card/<basename>
-      - sdcard/<basename>
-    """
+    """Attempt to find a local copy inside the project dir for build-time processing."""
     candidates = []
     try:
         candidates.append(Path(CORE.relative_config_path(sd_path.lstrip("/"))))
@@ -738,21 +634,32 @@ def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
             return c
     return None
 
-
 async def write_image(config, all_frames=False):
     """Fonction principale de traitement des images."""
-    path_str = config[CONF_FILE]
-
-    # Détecte si c'est une image de la carte SD
-    if is_sd_card_path(path_str):
-        _LOGGER.info(f"Traitement d'une image SD: {path_str}")
-        sd_path = normalize_to_sd_path(path_str)
+    file_config = config[CONF_FILE]
+    
+    # Détection d'une image SD card
+    is_sd_image = False
+    sd_path = None
+    sd_card_id = None
+    
+    if isinstance(file_config, dict) and file_config.get(CONF_SOURCE) == SOURCE_SD_CARD:
+        is_sd_image = True
+        sd_path = file_config[CONF_PATH]
+        sd_card_id = file_config.get(CONF_SD_CARD_ID)
+    elif isinstance(file_config, str) and is_sd_card_path(file_config):
+        is_sd_image = True
+        sd_path = file_config
+    
+    if is_sd_image:
+        _LOGGER.info(f"Traitement d'une image SD: {sd_path} (SD card ID: {sd_card_id})")
+        sd_path = normalize_to_sd_path(sd_path)
         
         # Gestion du resize - OBLIGATOIRE pour les images SD
         if CONF_RESIZE not in config:
             raise cv.Invalid(
                 f"Le paramètre 'resize' est obligatoire pour les images de carte SD. "
-                f"Spécifiez 'resize: WIDTHxHEIGHT' pour l'image {path_str}"
+                f"Spécifiez 'resize: WIDTHxHEIGHT' pour l'image {sd_path}"
             )
         
         width, height = config[CONF_RESIZE]
@@ -760,7 +667,7 @@ async def write_image(config, all_frames=False):
         transparency = config[CONF_TRANSPARENCY]
         invert_alpha = config[CONF_INVERT_ALPHA]
         
-        _LOGGER.info(f"Image SD configurée: {path_str} -> {width}x{height}")
+        _LOGGER.info(f"Image SD configurée: {sd_path} -> {width}x{height}")
         
         def calculate_buffer_size(w, h, img_type, trans):
             """Calcule la taille du buffer pour une configuration donnée"""
@@ -776,28 +683,23 @@ async def write_image(config, all_frames=False):
                 bpp = 3  # Par défaut RGB
             return w * h * bpp
         
-        # Calcul de la taille du buffer
         buffer_size = calculate_buffer_size(width, height, type, transparency)
+        max_buffer_size = 8 * 1024 * 1024  # 8MB max
         
-        # Validation de la taille - permet des images plus grandes pour ESP32-S3/P4 avec PSRAM
-        max_buffer_size = 8 * 1024 * 1024  # 8MB max - ajustable selon votre ESP32
-        
-        # Avertissement pour les grosses images mais pas d'erreur bloquante
         if buffer_size > 4 * 1024 * 1024:  # > 4MB
             _LOGGER.warning(
-                f"Image SD {path_str}: buffer très grand ({buffer_size / (1024*1024):.1f} MB). "
+                f"Image SD {sd_path}: buffer très grand ({buffer_size / (1024*1024):.1f} MB). "
                 f"Assurez-vous que votre ESP32 a assez de PSRAM."
             )
         
         if buffer_size > max_buffer_size:
             raise cv.Invalid(
-                f"Image SD {path_str}: buffer trop grand ({buffer_size} bytes). "
+                f"Image SD {sd_path}: buffer trop grand ({buffer_size} bytes). "
                 f"Maximum autorisé: {max_buffer_size} bytes. "
                 f"Réduisez la taille avec resize: ou changez le format."
             )
         
-        # Crée un buffer de la bonne taille rempli de zéros
-        # Ceci est un placeholder - l'image réelle sera chargée au runtime
+        # Crée un buffer placeholder
         placeholder_data = [0] * buffer_size
         
         # Configuration de l'encoder pour les métadonnées
@@ -807,24 +709,16 @@ async def write_image(config, all_frames=False):
         if byte_order := config.get(CONF_BYTE_ORDER):
             if hasattr(encoder, "set_big_endian"):
                 encoder.set_big_endian(byte_order == "BIG_ENDIAN")
-                _LOGGER.info(f"Configuration byte_order pour {path_str}: {byte_order}")
 
         rhs = [HexInt(x) for x in placeholder_data]
         prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
         image_type = get_image_type_enum(type)
         trans_value = get_transparency_enum(transparency)
 
-        _LOGGER.info(f"""Configuration de l'image SD:
-            - Fichier: {sd_path}
-            - Dimensions: {width}x{height}
-            - Type: {type}
-            - Transparence: {transparency}
-            - Buffer size: {buffer_size} bytes ({buffer_size / 1024:.1f} KB)
-        """)
-
-        return prog_arr, width, height, image_type, trans_value, 1, True, sd_path
+        return prog_arr, width, height, image_type, trans_value, 1, True, sd_path, sd_card_id
 
     # Code existant pour les images normales (non-SD)
+    path_str = str(file_config)
     path = Path(path_str)
     if not path.is_file():
         raise core.EsphomeError(f"Impossible de charger le fichier image {path}")
@@ -854,7 +748,7 @@ async def write_image(config, all_frames=False):
 
     if not resize and (width > 500 or height > 500):
         _LOGGER.warning(
-            'L\'image "%s" est très grande. Considérez utiliser le paramètre resize.',
+            'L\'image "%s" est très large. Considérez utiliser le paramètre resize.',
             path,
         )
 
@@ -896,10 +790,11 @@ async def write_image(config, all_frames=False):
     image_type = get_image_type_enum(type)
     trans_value = get_transparency_enum(transparency)
 
-    return prog_arr, width, height, image_type, trans_value, frame_count, False, None
+    return prog_arr, width, height, image_type, trans_value, frame_count, False, None, None
 
 
 async def to_code(config):
+    """Fonction principale de génération du code C++"""
     if isinstance(config, list):
         for entry in config:
             await to_code(entry)
@@ -907,18 +802,173 @@ async def to_code(config):
         for entry in config.values():
             await to_code(entry)
     else:
-        prog_arr, width, height, image_type, trans_value, _, sd_runtime, sd_path = await write_image(config)
-        
+        # Traitement d'une image individuelle
+        result = await write_image(config)
+        prog_arr, width, height, image_type, trans_value, frame_count, sd_runtime, sd_path, sd_card_id = result
+
         var = cg.new_Pvariable(config[CONF_ID], prog_arr, width, height, image_type, trans_value)
 
-        # Si image configurée pour lecture runtime depuis la SD
+        # Configuration spéciale pour les images SD
         if sd_runtime:
             cg.add(var.set_sd_path(sd_path))
             cg.add(var.set_sd_runtime(True))
             _LOGGER.info(f"Image {config[CONF_ID]} configured for SD card runtime loading: {sd_path}")
             
-            # Ajouter seulement le define nécessaire
+            # Liaison avec le composant sd_mmc_card si spécifié
+            if sd_card_id and sd_mmc_card:
+                try:
+                    sd_card_var = await cg.get_variable(sd_card_id)
+                    # Créer une lambda pour le lecteur de fichier SD
+                    sd_reader_lambda = cg.lambda_(
+                        """
+                        return [](const std::string& path, std::vector<uint8_t>& data) -> bool {
+                            auto sd_card = """ + str(sd_card_var) + """;
+                            if (sd_card) {
+                                auto file_data = sd_card->read_file(path);
+                                if (!file_data.empty()) {
+                                    data = std::move(file_data);
+                                    return true;
+                                }
+                            }
+                            return false;
+                        };
+                        """
+                    )
+                    cg.add(var.set_sd_file_reader(sd_reader_lambda))
+                    _LOGGER.info(f"Image {config[CONF_ID]} linked to SD card: {sd_card_id}")
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to link image {config[CONF_ID]} to SD card {sd_card_id}: {e}")
+            else:
+                # Utilisation du lecteur global si pas de sd_card_id spécifique
+                _LOGGER.info(f"Image {config[CONF_ID]} will use global SD reader")
+            
+            # Ajouter les defines nécessaires
             cg.add_define("USE_SD_CARD_IMAGES")
+            
+            # Si on a un composant sd_mmc_card disponible, ajouter le support
+            if sd_mmc_card:
+                cg.add_define("USE_SD_MMC_CARD_COMPONENT")
+
+
+# Configuration du setup global pour lier les composants
+async def setup_global_sd_reader():
+    """Configure le lecteur SD global si aucun lecteur spécifique n'est configuré"""
+    setup_lambda = cg.lambda_(
+        """
+        // Configuration du lecteur SD global pour les images
+        static bool global_reader_configured = false;
+        if (!global_reader_configured) {
+            auto global_sd_reader = [](const std::string& path, std::vector<uint8_t>& data) -> bool {
+                ESP_LOGD("image", "Attempting to read SD file: %s", path.c_str());
+                
+                // Essayer l'accès direct au fichier
+                FILE *file = fopen(path.c_str(), "rb");
+                if (!file) {
+                    ESP_LOGW("image", "Cannot open file: %s", path.c_str());
+                    return false;
+                }
+                
+                // Obtenir la taille du fichier
+                fseek(file, 0, SEEK_END);
+                long file_size = ftell(file);
+                fseek(file, 0, SEEK_SET);
+                
+                if (file_size <= 0 || file_size > 10 * 1024 * 1024) {  // Max 10MB
+                    ESP_LOGE("image", "Invalid file size: %ld", file_size);
+                    fclose(file);
+                    return false;
+                }
+                
+                // Lire le fichier
+                data.resize(file_size);
+                size_t bytes_read = fread(data.data(), 1, file_size, file);
+                fclose(file);
+                
+                if (bytes_read != (size_t)file_size) {
+                    ESP_LOGE("image", "Read size mismatch: expected %ld, got %zu", file_size, bytes_read);
+                    return false;
+                }
+                
+                ESP_LOGI("image", "Successfully read SD file: %s (%zu bytes)", path.c_str(), data.size());
+                return true;
+            };
+            
+            esphome::image::Image::set_global_sd_reader(global_sd_reader);
+            global_reader_configured = true;
+            ESP_LOGI("image", "Global SD reader configured");
+        }
+        """
+    )
+    
+    # Ajouter cette lambda au setup principal d'ESPHome
+    cg.add(cg.App.register_component(setup_lambda))
+
+
+# Hook pour s'assurer que le lecteur global est configuré
+async def final_validate(config):
+    """Validation finale et setup des composants globaux"""
+    # Vérifier s'il y a des images SD configurées
+    has_sd_images = False
+    
+    if isinstance(config, list):
+        for entry in config:
+            if isinstance(entry, dict):
+                file_config = entry.get(CONF_FILE)
+                if isinstance(file_config, dict) and file_config.get(CONF_SOURCE) == SOURCE_SD_CARD:
+                    has_sd_images = True
+                elif isinstance(file_config, str) and is_sd_card_path(file_config):
+                    has_sd_images = True
+    
+    if has_sd_images:
+        _LOGGER.info("SD card images detected, configuring global SD reader")
+        await setup_global_sd_reader()
+    
+    return config
+
+
+# Ajout des fonctions de validation et setup
+def validate_pillow_installed(value):
+    """Valide que Pillow est installé"""
+    try:
+        import PIL
+    except ImportError as err:
+        raise cv.Invalid(
+            "Please install the Pillow python package to use this feature. "
+            "(pip install Pillow)"
+        ) from err
+    return value
+
+
+def validate_cairosvg_installed(value):
+    """Valide que cairosvg est installé si nécessaire"""
+    try:
+        import cairosvg
+    except ImportError as err:
+        raise cv.Invalid(
+            "Please install the cairosvg python package to use this feature. "
+            "(pip install cairosvg)"
+        ) from err
+
+    major, minor, _ = cairosvg.__version__.split(".")
+    if major < "2" or major == "2" and minor < "2":
+        raise cv.Invalid(
+            "Please update your cairosvg installation to at least 2.2.0. "
+            "(pip install -U cairosvg)"
+        )
+    return value
+
+
+# Export des fonctions principales
+__all__ = [
+    "CONFIG_SCHEMA",
+    "to_code",
+    "final_validate",
+    "Image_",
+    "ImageType",
+    "TransparencyType",
+    "SOURCE_SD_CARD",
+    "CONF_SD_CARD_ID",
+]
 
 
 
