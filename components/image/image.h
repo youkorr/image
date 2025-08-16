@@ -73,7 +73,7 @@ class Image : public display::BaseImage {
 
   bool mount_sd_card(); 
 
-  bool load_sd_image(uint8_t *buffer, size_t buffer_size);
+  
   
   // Fonction statique pour enregistrer un lecteur de fichier global
   static void set_global_sd_reader(SDFileReader reader) { global_sd_reader_ = reader; }
@@ -116,12 +116,6 @@ class Image : public display::BaseImage {
   // Lecteur de fichier global (partagé par toutes les images)
   static SDFileReader global_sd_reader_;
 
-  #ifdef USE_SD_CARD_IMAGES
-  // Helper methods for SD card access
-  bool wait_for_sd_mount(uint32_t timeout_ms = 5000);
-  bool read_sd_file(const std::string &path, uint8_t *buffer, size_t buffer_size);
-  std::string normalize_sd_path(const std::string &path);
-#endif
 
 #ifdef USE_LVGL
   lv_img_dsc_t dsc_{};
