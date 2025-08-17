@@ -357,7 +357,7 @@ def is_sd_card_path(path_str: str) -> bool:
         "sd_card\\", 
         "/sd_card/",
         "\\sd_card\\",
-        "sdcard/",
+        "/sdcard",
         "/sdcard/",
         "sd/",
         "/sd/",
@@ -447,32 +447,22 @@ def validate_file_shorthand(value):
 def normalize_to_sd_path(path: str) -> str:
     """
     Normalise le chemin vers un format unifié pour la carte SD.
-    Cette fonction génère maintenant les métadonnées pour la recherche automatique.
     """
     p = str(path).strip()
     p = p.replace("\\", "/")
     # collapse multiple slashes
     p = re.sub(r"/+", "/", p)
-    
-    # Nettoie et normalise le chemin
-    if p.startswith("/sd_card/"):
-        rest = p[9:]  # Enlever "/sd_card/"
-        normalized = "/" + rest
-    elif p.startswith("sd_card/"):
-        rest = p[8:]  # Enlever "sd_card/"
-        normalized = "/" + rest
-    elif p.startswith("/sdcard/"):
-        rest = p[8:]  # Enlever "/sdcard/"
-        normalized = "/" + rest
-    elif p.startswith("sdcard/"):
-        rest = p[7:]  # Enlever "sdcard/"
-        normalized = "/" + rest
-    elif not p.startswith("/"):
-        normalized = "/" + p
-    else:
-        normalized = p
-    
-    _LOGGER.info(f"Chemin SD normalisé: {path} -> {normalized}")
+
+    # Supprime les préfixes connus qui peuvent précéder le vrai chemin
+    for prefix in ("/sd_card/", "sd_card/", "/sdcard/", "sdcard/"):
+        if p.startswith(prefix):
+            p = p[len(prefix):]
+            break
+    if p.startswith("/"):
+        p = p[1:]  # enlever le / de début si présent
+
+    # Ajoute toujours le point de montage officiel
+    normalized = f"{MOUNT_POINT}/{p}" if p else MOUNT_POINT
     return normalized
 
 
