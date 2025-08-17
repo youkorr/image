@@ -8,14 +8,6 @@ import re
 
 from PIL import Image, UnidentifiedImageError
 
-import hashlib
-import io
-import logging
-from pathlib import Path
-import re
-
-from PIL import Image, UnidentifiedImageError
-
 from esphome import core, external_files
 import esphome.codegen as cg
 from esphome.components.const import CONF_BYTE_ORDER
@@ -35,14 +27,10 @@ from esphome.const import (
 )
 from esphome.core import CORE, HexInt
 
-_LOGGER = logging.getLogger(__name__)  # Corrigé : __name__ au lieu de *_name*
+_LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "image"
-# NOTE: sd_mmc_card dépendance conditionnelle - sera ajoutée automatiquement si nécessaire
 DEPENDENCIES = ["display"]
-
-# Configuration pour la liaison avec sd_mmc_card
-CONF_SD_MMC_CARD_ID = "sd_mmc_card_id"
 
 image_ns = cg.esphome_ns.namespace("image")
 ImageType = image_ns.enum("ImageType")
@@ -343,13 +331,15 @@ def local_path(value):
 
 
 def sd_card_path(value):
-    """Retourne le chemin complet sur la racine de la SD card"""
+    """Retourne le chemin pour la carte SD - doit correspondre au montage système"""
     value = value[CONF_PATH] if isinstance(value, dict) else value
-    # Supprime un éventuel slash en début pour éviter les doublons
-    value = value.lstrip("/\\")
-    full_path = "/" + value  # chemin à partir de la racine de la SD
-    _LOGGER.info(f"Chemin SD résolu: {full_path}")
-    return full_path
+    # Nettoie le chemin et assure qu'il commence par /
+    clean_path = str(value).strip().lstrip("/\\")
+    # Le chemin final dépend de comment votre système monte la SD card
+    # Souvent c'est /sdcard/ sur ESP32
+    final_path = f"/sdcard/{clean_path}"
+    _LOGGER.info(f"Chemin SD configuré: {value} -> {final_path}")
+    return final_path
 
 def is_sd_card_path(path_str: str) -> bool:
     """Check if a path is an SD card path"""
@@ -360,12 +350,11 @@ def is_sd_card_path(path_str: str) -> bool:
         path_str.startswith("sd_card/") or 
         path_str.startswith("sd_card//") or
         path_str.startswith("/sdcard/") or
-        
+        path_str.startswith("sdcard/") or
         path_str.startswith("//") or
         path_str.startswith("/sd/") or
         path_str.startswith("sd/")
     )
-
 
 
 def download_file(url, path):
@@ -417,10 +406,10 @@ def validate_cairosvg_installed():
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
-    # Vérification pour les chemins SD card - VERSION CORRIGÉE
+    # Vérification pour les chemins SD card
     if is_sd_card_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
-        return value  # Retourne le chemin tel quel pour SD card
+        return value  # Retourne le chemin tel quel
     
     parts = value.strip().split(":")
     if len(parts) == 2 and parts[0] in MDI_SOURCES:
@@ -563,7 +552,6 @@ OPTIONS_SCHEMA = {
     cv.Optional(CONF_BYTE_ORDER): cv.one_of("BIG_ENDIAN", "LITTLE_ENDIAN", upper=True),
     cv.Optional(CONF_TRANSPARENCY, default=CONF_OPAQUE): validate_transparency(),
     cv.Optional(CONF_TYPE): validate_type(IMAGE_TYPE),
-    
 }
 
 OPTIONS = [key.schema for key in OPTIONS_SCHEMA]
@@ -684,70 +672,38 @@ def _config_schema(config):
 CONFIG_SCHEMA = _config_schema
 
 
-# FONCTION CORRIGÉE : normalise une entrée en un chemin utilisé par le runtime SD (/sdcard/...)
+# FONCTION CORRIGÉE : normalise le chemin vers le montage réel de la carte SD
 def normalize_to_sd_path(path: str) -> str:
-    """Normalize path to SD card format for root mount (/)"""
+    """Normalize path to actual SD card mount point"""
     p = str(path).strip()
     p = p.replace("\\", "/")
     # collapse multiple slashes
     p = re.sub(r"/+", "/", p)
     
-    # Si commence par /sd_card/ -> convertir vers /
-    if p.startswith("/sd_card/"):
-        rest = p[9:]  # Enlever "/sd_card/"
-        return "/" + rest
-    elif p.startswith("sd_card/"):
-        rest = p[8:]  # Enlever "sd_card/"
-        return "/" + rest
+    # Supprime les préfixes courants et retourne le chemin pour /sdcard/
+    prefixes_to_remove = ["/sd_card/", "sd_card/", "/sdcard/", "sdcard/", "/sd/", "sd/"]
     
-    # Si commence par /sdcard/ -> convertir vers /
+    for prefix in prefixes_to_remove:
+        if p.startswith(prefix):
+            rest = p[len(prefix):]
+            result = f"/sdcard/{rest}"
+            _LOGGER.info(f"Chemin SD normalisé: {path} -> {result}")
+            return result
+    
+    # Si déjà au bon format
     if p.startswith("/sdcard/"):
-        rest = p[8:]  # Enlever "/sdcard/"
-        return "/" + rest
-    elif p.startswith("sdcard/"):
-        rest = p[7:]  # Enlever "sdcard/"
-        return "/" + rest
+        return p
     
-    # Si chemin relatif (pas de slash initial), ajouter slash
+    # Si chemin relatif, ajouter /sdcard/
     if not p.startswith("/"):
-        return "/" + p
+        result = f"/sdcard/{p}"
+        _LOGGER.info(f"Chemin SD normalisé: {path} -> {result}")
+        return result
     
-    # Sinon retourner tel quel (déjà un chemin absolu)
-    _LOGGER.info(f"Chemin SD normalisé: {path} -> {p}")
-    return p
-
-
-def try_resolve_local_candidate(orig_path: str, sd_path: str) -> Path | None:
-    """
-    Attempt to find a local copy inside the project dir for build-time processing.
-    We try several candidate locations that users commonly use:
-      - <sd_path> relative to project (sdcard/...)
-      - original path stripped of leading slash
-      - sd_card/<basename>
-      - sdcard/<basename>
-    """
-    candidates = []
-    try:
-        candidates.append(Path(CORE.relative_config_path(sd_path.lstrip("/"))))
-    except Exception:
-        pass
-    try:
-        candidates.append(Path(CORE.relative_config_path(orig_path.lstrip("/"))))
-    except Exception:
-        pass
-    try:
-        candidates.append(Path(CORE.relative_config_path("sd_card/" + Path(sd_path).name)))
-    except Exception:
-        pass
-    try:
-        candidates.append(Path(CORE.relative_config_path("sdcard/" + Path(sd_path).name)))
-    except Exception:
-        pass
-
-    for c in candidates:
-        if c and c.is_file():
-            return c
-    return None
+    # Sinon convertir chemin absolu
+    result = f"/sdcard{p}" if not p.startswith("/sdcard") else p
+    _LOGGER.info(f"Chemin SD normalisé: {path} -> {result}")
+    return result
 
 
 async def write_image(config, all_frames=False):
@@ -771,7 +727,7 @@ async def write_image(config, all_frames=False):
         transparency = config[CONF_TRANSPARENCY]
         invert_alpha = config[CONF_INVERT_ALPHA]
         
-        _LOGGER.info(f"Image SD configurée: {path_str} -> {width}x{height}")
+        _LOGGER.info(f"Image SD configurée: {path_str} -> {sd_path} -> {width}x{height}")
         
         def calculate_buffer_size(w, h, img_type, trans):
             """Calcule la taille du buffer pour une configuration donnée"""
@@ -790,10 +746,9 @@ async def write_image(config, all_frames=False):
         # Calcul de la taille du buffer
         buffer_size = calculate_buffer_size(width, height, type, transparency)
         
-        # Validation de la taille - permet des images plus grandes pour ESP32-S3/P4 avec PSRAM
-        max_buffer_size = 8 * 1024 * 1024  # 8MB max - ajustable selon votre ESP32
+        # Validation de la taille
+        max_buffer_size = 8 * 1024 * 1024  # 8MB max
         
-        # Avertissement pour les grosses images mais pas d'erreur bloquante
         if buffer_size > 4 * 1024 * 1024:  # > 4MB
             _LOGGER.warning(
                 f"Image SD {path_str}: buffer très grand ({buffer_size / (1024*1024):.1f} MB). "
@@ -808,7 +763,6 @@ async def write_image(config, all_frames=False):
             )
         
         # Crée un buffer de la bonne taille rempli de zéros
-        # Ceci est un placeholder - l'image réelle sera chargée au runtime
         placeholder_data = [0] * buffer_size
         
         # Configuration de l'encoder pour les métadonnées
@@ -818,7 +772,6 @@ async def write_image(config, all_frames=False):
         if byte_order := config.get(CONF_BYTE_ORDER):
             if hasattr(encoder, "set_big_endian"):
                 encoder.set_big_endian(byte_order == "BIG_ENDIAN")
-                _LOGGER.info(f"Configuration byte_order pour {path_str}: {byte_order}")
 
         rhs = [HexInt(x) for x in placeholder_data]
         prog_arr = cg.progmem_array(config[CONF_RAW_DATA_ID], rhs)
@@ -928,8 +881,12 @@ async def to_code(config):
             cg.add(var.set_sd_runtime(True))
             _LOGGER.info(f"Image {config[CONF_ID]} configured for SD card runtime loading: {sd_path}")
             
-            # Ajouter seulement le define nécessaire
+            # Ajouter les defines nécessaires pour supporter les images SD
             cg.add_define("USE_SD_CARD_IMAGES")
+            
+            # Ajouter les includes nécessaires pour les fonctions SD
+            cg.add_library("FS", None)  # Bibliothèque ESP32 pour le système de fichiers
+            cg.add_library("SD", None)  # Bibliothèque ESP32 pour la carte SD
 
 
 
