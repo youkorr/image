@@ -551,6 +551,12 @@ IMAGE_ID_SCHEMA = {
     cv.GenerateID(CONF_RAW_DATA_ID): cv.declare_id(cg.uint8),
 }
 
+def validate_file_or_sd(value):
+    """Valide un fichier image ou un chemin sd://"""
+    value = cv.string_strict(value)
+    if value.lower().startswith("sd://") or is_sd_card_path(value):
+        return normalize_to_sd_path(value)
+    return validate_file_shorthand(value)
 
 OPTIONS_SCHEMA = {
     cv.Optional(CONF_RESIZE): cv.dimensions,
