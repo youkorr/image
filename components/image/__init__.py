@@ -349,16 +349,30 @@ def is_sd_card_path(path_str: str) -> bool:
     """Check if a path is an SD card path"""
     if not isinstance(path_str, str):
         return False
-    path_str = path_str.strip()
-    return (
-        path_str.startswith("sd_card/") or 
-        path_str.startswith("sd_card//") or
-        path_str.startswith("/sdcard/") or
-        path_str.startswith("sdcard/") or
-        path_str.startswith("//") or
-        path_str.startswith("/sd/") or
-        path_str.startswith("sd/")
-    )
+    path_str = path_str.strip().lower()
+    
+    # Patterns plus larges pour détecter les chemins SD
+    sd_patterns = [
+        "sd_card/",
+        "sd_card\\", 
+        "/sd_card/",
+        "\\sd_card\\",
+        "sdcard/",
+        "/sdcard/",
+        "sd/",
+        "/sd/",
+    ]
+    
+    for pattern in sd_patterns:
+        if path_str.startswith(pattern):
+            return True
+    
+    # Si le chemin contient 'sd' et ne ressemble pas à un fichier local
+    if 'sd' in path_str and not path_str.startswith('.') and not path_str.startswith('http'):
+        if '/' in path_str or '\\' in path_str:
+            return True
+            
+    return False
 
 
 def download_file(url, path):
@@ -410,10 +424,10 @@ def validate_cairosvg_installed():
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
-    # Vérification pour les chemins SD card - VERSION CORRIGÉE
+    # PREMIÈRE vérification - SD card AVANT toute autre validation
     if is_sd_card_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
-        return value  # Retourne le chemin tel quel pour SD card
+        return value  # Retourne immédiatement sans validation cv.file_
     
     parts = value.strip().split(":")
     if len(parts) == 2 and parts[0] in MDI_SOURCES:
@@ -425,6 +439,7 @@ def validate_file_shorthand(value):
     if value.startswith("http://") or value.startswith("https://"):
         return download_image(value)
 
+    # Seulement pour les fichiers locaux
     value = cv.file_(value)
     return local_path(value)
 
@@ -883,11 +898,19 @@ async def write_local_image(config, all_frames=False):
         raise cv.Invalid(f"Impossible de traiter l'image: {e}")
 
 
+# Créez un validateur personnalisé pour les fichiers
+def validate_local_file_path(value):
+    """Valide un chemin de fichier local seulement si ce n'est pas SD card"""
+    if is_sd_card_path(value):
+        return value
+    return cv.file_(value)
+
+
 LOCAL_SCHEMA = cv.All(
     {
-        cv.Required(CONF_PATH): cv.file_,
+        cv.Required(CONF_PATH): validate_local_file_path,
     },
-    local_path,
+    lambda value: local_path(value) if not is_sd_card_path(value.get(CONF_PATH, "")) else sd_card_path(value),
 )
 
 # Ajout du schéma SD card
@@ -978,7 +1001,12 @@ def validate_settings(value):
         
         # Pour les fichiers SD card, on évite la validation locale
         if is_sd_card_path(file_path):
-            _LOGGER.info(f"SD card image configured: {file_path}")
+            _LOGGER.info(f"SD card image configured: {file_path} - skipping local validation")
+            # Validation spécifique pour SD card
+            if CONF_RESIZE not in value:
+                raise cv.Invalid(
+                    f"SD card images require 'resize:' parameter. Image: {file_path}"
+                )
             return value
             
         file = Path(file)
@@ -1170,7 +1198,7 @@ def detect_sd_mount_points():
     
     possible_mounts = [
         "/sdcard", "/sd", "/mnt/sd", "/mnt/sdcard", 
-        "/media/sd", "/mnt", "/"
+        "", "/mnt", "/"
     ]
     
     available_mounts = []
@@ -1187,75 +1215,6 @@ def detect_sd_mount_points():
                 continue
     
     return available_mounts
-
-
-def generate_yaml_example():
-    """
-    Génère un exemple de configuration YAML qui évite complètement la flash memory
-    """
-    return """
-# Configuration ESPHome pour images SD sans utilisation de flash memory
-
-# Composant SD card requis
-sd_mmc_card:
-  clk_pin: GPIO14
-  cmd_pin: GPIO15  
-  data_pins: [GPIO2, GPIO4, GPIO12, GPIO13]
-
-# Images stockées uniquement sur SD - AUCUNE donnée en flash !
-image:
-  # Image simple depuis SD
-  - id: photo_sd
-    file: "sd_card/photos/vacances.jpg"
-    resize: 320x240            # OBLIGATOIRE pour SD
-    type: RGB565               # Format optimisé
-    transparency: opaque
-    
-  # Image avec transparency
-  - id: icon_sd  
-    file: "sd_card/icons/warning.png"
-    resize: 64x64
-    type: RGB565
-    transparency: chroma_key
-    
-  # Image monochrome optimisée
-  - id: logo_sd
-    file: "sd_card/logos/company.png"  
-    resize: 128x64
-    type: BINARY
-    transparency: opaque
-
-display:
-  - platform: ili9341
-    # ... configuration display
-    lambda: |-
-      // Les images sont chargées automatiquement depuis la SD
-      // Aucune donnée stockée en flash memory !
-      it.image(10, 10, id(photo_sd));   // Charge depuis SD si nécessaire
-      it.image(50, 50, id(icon_sd));    // Auto-détection du point de montage
-      it.image(0, 0, id(logo_sd));      // Buffer alloué dynamiquement
-"""
-
-
-# Fonction d'entrée principale pour ESPHome
-async def to_code(config):
-    """
-    Fonction principale appelée par ESPHome pour générer le code.
-    Traite chaque image selon son type (locale ou SD).
-    """
-    # Validation globale pour éviter l'usage de flash memory
-    validate_no_flash_memory_usage(config)
-    
-    # Traite chaque image configurée
-    for image_config in config:
-        var = await write_image(image_config)
-        if var:
-            _LOGGER.info(f"Image générée: {image_config[CONF_ID]}")
-
-
-# Configuration pour le type d'instance ESPHome
-CODEOWNERS = ["@esphome/core"]
-DEPENDENCIES = ["display"]
 
 
 
