@@ -409,10 +409,15 @@ def validate_cairosvg_installed():
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
-    # Vérification pour les chemins SD card
+    # Gestion directe des chemins SD card (sd://)
+    if value.lower().startswith("sd://"):
+        _LOGGER.info(f"SD card image (shorthand) detected: {value}")
+        return normalize_to_sd_path(value)
+    
+    # Vérification pour les autres formats SD card
     if is_sd_card_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
-        return value  # Retourne le chemin tel quel
+        return normalize_to_sd_path(value)
     
     parts = value.strip().split(":")
     if len(parts) == 2 and parts[0] in MDI_SOURCES:
@@ -426,6 +431,7 @@ def validate_file_shorthand(value):
 
     value = cv.file_(value)
     return local_path(value)
+
 
 
 LOCAL_SCHEMA = cv.All(
