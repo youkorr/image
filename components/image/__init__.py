@@ -331,27 +331,30 @@ def local_path(value):
 
 
 def sd_card_path(value):
-    """Retourne le chemin pour la carte SD - doit correspondre au montage système"""
+    """Retourne le chemin pour la carte SD depuis un chemin type sd://"""
     value = value[CONF_PATH] if isinstance(value, dict) else value
-    # Nettoie le chemin et assure qu'il commence par /
-    clean_path = str(value).strip().lstrip("/\\")
-    # Le chemin final dépend de comment votre système monte la SD card
-    # Souvent c'est /sdcard/ sur ESP32
-    final_path = f"/sdcard/{clean_path}"
-    _LOGGER.info(f"Chemin SD configuré: {value} -> {final_path}")
-    return final_path
+    path = str(value).strip()
+    
+    if path.lower().startswith("sd://"):
+        clean_path = path[5:].lstrip("/\\")  # enlève le sd://
+        final_path = f"/sdcard/{clean_path}"
+        _LOGGER.info(f"Chemin SD (sd://) configuré: {value} -> {final_path}")
+        return final_path
+    
+    # compatibilité avec anciens formats
+    return normalize_to_sd_path(path)
+
 
 def is_sd_card_path(path_str: str) -> bool:
-    """Check if a path is an SD card path"""
+    """Vérifie si un chemin pointe vers la carte SD"""
     if not isinstance(path_str, str):
         return False
-    path_str = path_str.strip()
+    path_str = path_str.strip().lower()
     return (
-        path_str.startswith("sd_card/") or 
-        path_str.startswith("sd_card//") or
+        path_str.startswith("sd://") or
+        path_str.startswith("sd_card/") or
         path_str.startswith("/sdcard/") or
         path_str.startswith("sdcard/") or
-        path_str.startswith("//") or
         path_str.startswith("/sd/") or
         path_str.startswith("sd/")
     )
@@ -680,11 +683,17 @@ def normalize_to_sd_path(path: str) -> str:
     # collapse multiple slashes
     p = re.sub(r"/+", "/", p)
     
-    # Supprime les préfixes courants et retourne le chemin pour /sdcard/
-    prefixes_to_remove = ["/sd_card/", "sd_card/", "/sdcard/", "sdcard/", "/sd/", "sd/"]
+    # Si chemin commence par sd://
+    if p.lower().startswith("sd://"):
+        rest = p[5:].lstrip("/")
+        result = f"/sdcard/{rest}"
+        _LOGGER.info(f"Chemin SD normalisé: {path} -> {result}")
+        return result
     
+    # Supprime les préfixes courants
+    prefixes_to_remove = ["/sd_card/", "sd_card/", "sdcard/", "/sd/", "sd/"]
     for prefix in prefixes_to_remove:
-        if p.startswith(prefix):
+        if p.lower().startswith(prefix):
             rest = p[len(prefix):]
             result = f"/sdcard/{rest}"
             _LOGGER.info(f"Chemin SD normalisé: {path} -> {result}")
@@ -700,10 +709,9 @@ def normalize_to_sd_path(path: str) -> str:
         _LOGGER.info(f"Chemin SD normalisé: {path} -> {result}")
         return result
     
-    # Sinon convertir chemin absolu
-    result = f"/sdcard{p}" if not p.startswith("/sdcard") else p
-    _LOGGER.info(f"Chemin SD normalisé: {path} -> {result}")
-    return result
+    # Sinon on retourne tel quel (on ne force plus /sdcard{p})
+    _LOGGER.info(f"Chemin SD conservé tel quel: {path} -> {p}")
+    return p
 
 
 async def write_image(config, all_frames=False):
