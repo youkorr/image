@@ -349,99 +349,49 @@ def is_sd_card_path(path_str: str) -> bool:
     """Check if a path is an SD card path"""
     if not isinstance(path_str, str):
         return False
-    path_str = path_str.strip()
-    return (
-        path_str.startswith("sd_card/") or 
-        path_str.startswith("sd_card//") or
-        path_str.startswith("/sdcard/") or
-        path_str.startswith("sdcard/") or
-        path_str.startswith("//") or
-        path_str.startswith("/sd/") or
-        path_str.startswith("sd/")
-    )
+    path_str = path_str.strip().lower()
+    
+    # Patterns plus larges pour détecter les chemins SD
+    sd_patterns = [
+        "sd_card/",
+        "sd_card\\", 
+        "/sd_card/",
+        "\\sd_card\\",
+        "sdcard/",
+        "/sdcard/",
+        "sd/",
+        "/sd/",
+    ]
+    
+    for pattern in sd_patterns:
+        if path_str.startswith(pattern):
+            return True
+    
+    # Si le chemin contient 'sd' et ne ressemble pas à un fichier local
+    if 'sd' in path_str and not path_str.startswith('.') and not path_str.startswith('http'):
+        if '/' in path_str or '\\' in path_str:
+            return True
+            
+    return False
 
 
 def download_file(url, path):
-    """
-    Télécharge un fichier avec validation améliorée
-    """
-    try:
-        external_files.download_content(url, path, IMAGE_DOWNLOAD_TIMEOUT)
-        
-        # Validation post-téléchargement
-        if not path.exists() or path.stat().st_size == 0:
-            raise cv.Invalid(f"Fichier téléchargé vide ou inexistant: {url}")
-        
-        # Vérification rapide du type de contenu
-        with open(path, 'rb') as f:
-            header = f.read(512)
-            
-        # Vérification des signatures d'images connues
-        image_signatures = [
-            b'\xFF\xD8\xFF',  # JPEG
-            b'\x89PNG\r\n\x1a\n',  # PNG
-            b'GIF87a', b'GIF89a',  # GIF
-            b'BM',  # BMP
-            b'RIFF',  # WebP (partiel)
-            b'<svg',  # SVG
-        ]
-        
-        is_image = any(header.startswith(sig) for sig in image_signatures)
-        
-        # Vérification si c'est un fichier HTML d'erreur
-        header_str = header.decode('utf-8', errors='ignore').lower()
-        if any(marker in header_str for marker in ['<!doctype', '<html', '<head', 'error', '404', '403', '500']):
-            raise cv.Invalid(
-                f"Le serveur a retourné une page d'erreur au lieu de l'image. "
-                f"Vérifiez l'URL: {url}"
-            )
-        
-        if not is_image:
-            _LOGGER.warning(f"Le fichier téléchargé ne semble pas être une image standard: {url}")
-            # On continue quand même, PIL pourra peut-être l'ouvrir
-        
-        _LOGGER.info(f"Fichier téléchargé avec succès: {url} -> {path} ({path.stat().st_size} bytes)")
-        return str(path)
-        
-    except Exception as e:
-        _LOGGER.error(f"Erreur lors du téléchargement de {url}: {e}")
-        raise cv.Invalid(f"Impossible de télécharger l'image depuis {url}: {str(e)}")
+    external_files.download_content(url, path, IMAGE_DOWNLOAD_TIMEOUT)
+    return str(path)
 
 
 def download_gh_svg(value, source):
-    """
-    Télécharge un fichier SVG depuis GitHub avec validation
-    """
     mdi_id = value[CONF_ICON] if isinstance(value, dict) else value
     base_dir = external_files.compute_local_file_dir(DOMAIN) / source
     path = base_dir / f"{mdi_id}.svg"
 
     url = MDI_SOURCES[source] + mdi_id + ".svg"
-    
-    try:
-        return download_file(url, path)
-    except Exception as e:
-        raise cv.Invalid(f"Impossible de télécharger l'icône SVG '{mdi_id}' depuis {source}: {str(e)}")
+    return download_file(url, path)
 
 
 def download_image(value):
-    """
-    Télécharge une image depuis une URL avec gestion d'erreur améliorée
-    """
-    url = value[CONF_URL] if isinstance(value, dict) else value
-    
-    # Validation de l'URL
-    if not url or not isinstance(url, str):
-        raise cv.Invalid("URL d'image invalide")
-    
-    if not (url.startswith('http://') or url.startswith('https://')):
-        raise cv.Invalid(f"URL d'image invalide (doit commencer par http:// ou https://): {url}")
-    
-    try:
-        local_path = compute_local_image_path(value)
-        return download_file(url, local_path)
-    except Exception as e:
-        raise cv.Invalid(f"Erreur lors du téléchargement de l'image {url}: {str(e)}")
+    value = value[CONF_URL] if isinstance(value, dict) else value
+    return download_file(value, compute_local_image_path(value))
 
 
 def is_svg_file(file):
@@ -474,10 +424,10 @@ def validate_cairosvg_installed():
 def validate_file_shorthand(value):
     value = cv.string_strict(value)
     
-    # Vérification pour les chemins SD card - VERSION CORRIGÉE
+    # PREMIÈRE vérification - SD card AVANT toute autre validation
     if is_sd_card_path(value):
         _LOGGER.info(f"SD card image detected: {value}")
-        return value  # Retourne le chemin tel quel pour SD card
+        return value  # Retourne immédiatement sans validation cv.file_
     
     parts = value.strip().split(":")
     if len(parts) == 2 and parts[0] in MDI_SOURCES:
@@ -489,6 +439,7 @@ def validate_file_shorthand(value):
     if value.startswith("http://") or value.startswith("https://"):
         return download_image(value)
 
+    # Seulement pour les fichiers locaux
     value = cv.file_(value)
     return local_path(value)
 
@@ -947,11 +898,19 @@ async def write_local_image(config, all_frames=False):
         raise cv.Invalid(f"Impossible de traiter l'image: {e}")
 
 
+# Créez un validateur personnalisé pour les fichiers
+def validate_local_file_path(value):
+    """Valide un chemin de fichier local seulement si ce n'est pas SD card"""
+    if is_sd_card_path(value):
+        return value
+    return cv.file_(value)
+
+
 LOCAL_SCHEMA = cv.All(
     {
-        cv.Required(CONF_PATH): cv.file_,
+        cv.Required(CONF_PATH): validate_local_file_path,
     },
-    local_path,
+    lambda value: local_path(value) if not is_sd_card_path(value.get(CONF_PATH, "")) else sd_card_path(value),
 )
 
 # Ajout du schéma SD card
@@ -1042,62 +1001,24 @@ def validate_settings(value):
         
         # Pour les fichiers SD card, on évite la validation locale
         if is_sd_card_path(file_path):
-            _LOGGER.info(f"SD card image configured: {file_path}")
+            _LOGGER.info(f"SD card image configured: {file_path} - skipping local validation")
+            # Validation spécifique pour SD card
+            if CONF_RESIZE not in value:
+                raise cv.Invalid(
+                    f"SD card images require 'resize:' parameter. Image: {file_path}"
+                )
             return value
             
         file = Path(file)
         if is_svg_file(file):
             validate_cairosvg_installed()
         else:
-            # Validation améliorée pour les images téléchargées
             try:
-                with Image.open(file) as img:
-                    # Vérification basique que c'est une vraie image
-                    width, height = img.size
-                    if width <= 0 or height <= 0:
-                        raise cv.Invalid(f"Image invalide (taille: {width}x{height}): {file}")
-                    
-                    # Log d'information
-                    _LOGGER.info(f"Image validée: {file} ({width}x{height}, mode: {img.mode})")
-                    
+                Image.open(file)
             except UnidentifiedImageError as exc:
-                # Vérifier si c'est un fichier HTML d'erreur ou autre
-                try:
-                    with open(file, 'rb') as f:
-                        content = f.read(1024).decode('utf-8', errors='ignore')
-                        if content.startswith('<!DOCTYPE') or content.startswith('<html'):
-                            raise cv.Invalid(
-                                f"Le fichier téléchargé est une page HTML, pas une image. "
-                                f"Vérifiez l'URL: {file}"
-                            )
-                        elif content.startswith('<?xml') and 'error' in content.lower():
-                            raise cv.Invalid(
-                                f"Le fichier téléchargé contient une erreur XML. "
-                                f"Vérifiez l'URL: {file}"
-                            )
-                        else:
-                            raise cv.Invalid(
-                                f"Le fichier téléchargé n'est pas une image valide. "
-                                f"Format non reconnu: {file}"
-                            )
-                except UnicodeDecodeError:
-                    # Fichier binaire mais pas une image valide
-                    raise cv.Invalid(
-                        f"Fichier binaire téléchargé mais format d'image non supporté: {file}"
-                    )
-                except Exception:
-                    # Erreur générique
-                    raise cv.Invalid(
-                        f"Impossible d'ouvrir le fichier comme image: {file.absolute()}"
-                    ) from exc
-                    
-            except Exception as exc:
-                # Autres erreurs d'ouverture d'image
-                _LOGGER.error(f"Erreur lors de l'ouverture de l'image {file}: {exc}")
                 raise cv.Invalid(
-                    f"Erreur lors du traitement de l'image {file.absolute()}: {str(exc)}"
+                    f"File can't be opened as image: {file.absolute()}"
                 ) from exc
-                
     return value
 
 
@@ -1294,75 +1215,6 @@ def detect_sd_mount_points():
                 continue
     
     return available_mounts
-
-
-def generate_yaml_example():
-    """
-    Génère un exemple de configuration YAML qui évite complètement la flash memory
-    """
-    return """
-# Configuration ESPHome pour images SD sans utilisation de flash memory
-
-# Composant SD card requis
-sd_mmc_card:
-  clk_pin: GPIO14
-  cmd_pin: GPIO15  
-  data_pins: [GPIO2, GPIO4, GPIO12, GPIO13]
-
-# Images stockées uniquement sur SD - AUCUNE donnée en flash !
-image:
-  # Image simple depuis SD
-  - id: photo_sd
-    file: "sd_card/photos/vacances.jpg"
-    resize: 320x240            # OBLIGATOIRE pour SD
-    type: RGB565               # Format optimisé
-    transparency: opaque
-    
-  # Image avec transparency
-  - id: icon_sd  
-    file: "sd_card/icons/warning.png"
-    resize: 64x64
-    type: RGB565
-    transparency: chroma_key
-    
-  # Image monochrome optimisée
-  - id: logo_sd
-    file: "sd_card/logos/company.png"  
-    resize: 128x64
-    type: BINARY
-    transparency: opaque
-
-display:
-  - platform: ili9341
-    # ... configuration display
-    lambda: |-
-      // Les images sont chargées automatiquement depuis la SD
-      // Aucune donnée stockée en flash memory !
-      it.image(10, 10, id(photo_sd));   // Charge depuis SD si nécessaire
-      it.image(50, 50, id(icon_sd));    // Auto-détection du point de montage
-      it.image(0, 0, id(logo_sd));      // Buffer alloué dynamiquement
-"""
-
-
-# Fonction d'entrée principale pour ESPHome
-async def to_code(config):
-    """
-    Fonction principale appelée par ESPHome pour générer le code.
-    Traite chaque image selon son type (locale ou SD).
-    """
-    # Validation globale pour éviter l'usage de flash memory
-    validate_no_flash_memory_usage(config)
-    
-    # Traite chaque image configurée
-    for image_config in config:
-        var = await write_image(image_config)
-        if var:
-            _LOGGER.info(f"Image générée: {image_config[CONF_ID]}")
-
-
-# Configuration pour le type d'instance ESPHome
-CODEOWNERS = ["@esphome/core"]
-DEPENDENCIES = ["display"]
 
 
 
